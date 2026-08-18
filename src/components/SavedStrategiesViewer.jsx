@@ -221,7 +221,7 @@ const SavedStrategiesViewer = ({ isOpen, onToggle }) => {
                             <div className="flex items-center gap-1">
                               <span className="font-medium text-blue-600">LEG {idx + 1}:</span>
                               <span className="text-gray-700">
-                                {leg.position?.toUpperCase()} {leg.option_type?.toUpperCase()}
+                                {leg.position?.toUpperCase()} {leg.option_type?.toLowerCase()}
                               </span>
                             </div>
                             <div className="text-gray-500 mt-1">

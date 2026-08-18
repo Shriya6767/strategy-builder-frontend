@@ -437,11 +437,25 @@ async def save_strategy_endpoint(request: BacktestRequest):
                 "status": "error", "error": "At least one leg is required"
             })
 
+        # ⭐ CASE NORMALIZATION FIX: Ensure consistent case for option_type and position_type
+        normalized_legs = []
+        for leg in legs_data:
+            normalized_leg = leg.copy()
+            # Normalize option_type to lowercase: CALL/PUT → call/put
+            if "option_type" in normalized_leg and normalized_leg["option_type"]:
+                original = normalized_leg["option_type"]
+                normalized_leg["option_type"] = normalized_leg["option_type"].lower()
+                print(f"[SAVE-STRATEGY] Normalized option_type: {original} → {normalized_leg['option_type']}")
+            # Normalize position_type to uppercase: buy/sell → BUY/SELL
+            if "position_type" in normalized_leg and normalized_leg["position_type"]:
+                normalized_leg["position_type"] = normalized_leg["position_type"].upper()
+            normalized_legs.append(normalized_leg)
+
         strategy_id = str(uuid.uuid4())
         strategies_db[strategy_id] = {
             "strategy_id": strategy_id,
             "strategy":    strategy_data,
-            "legs":        legs_data,
+            "legs":        normalized_legs,
             "created_at":  datetime.now().isoformat(),
         }
 
@@ -565,12 +579,27 @@ async def get_strategy(strategy_id: str):
         print(f"[GET-STRATEGY] Found strategy: {strategy_record['strategy']['strategy_name']}")
         print(f"[GET-STRATEGY] Number of legs: {len(strategy_record['legs'])}")
 
+        # ⭐ CASE NORMALIZATION FIX: Convert option_type and position_type to lowercase
+        # Database may have uppercase "CALL"/"PUT" but backend/frontend expects lowercase
+        legs = strategy_record.get("legs", [])
+        normalized_legs = []
+        for leg in legs:
+            normalized_leg = leg.copy()
+            # Normalize option_type: CALL/PUT → call/put
+            if "option_type" in normalized_leg and normalized_leg["option_type"]:
+                normalized_leg["option_type"] = normalized_leg["option_type"].lower()
+                print(f"[GET-STRATEGY] Normalized option_type: {leg.get('option_type')} → {normalized_leg['option_type']}")
+            # Normalize position_type: ensure uppercase BUY/SELL
+            if "position_type" in normalized_leg and normalized_leg["position_type"]:
+                normalized_leg["position_type"] = normalized_leg["position_type"].upper()
+            normalized_legs.append(normalized_leg)
+
         return {
             "success": True,
             "message": "Strategy retrieved successfully",
             "data": {
                 "strategy": strategy_record["strategy"],
-                "legs": strategy_record["legs"],
+                "legs": normalized_legs,
             }
         }
 
@@ -604,6 +633,18 @@ async def run_backtest(request: BacktestRequest):
         strategy_data = request.strategy.model_dump()
         legs_data     = [leg.model_dump() for leg in request.legs]
 
+        # ⭐ CASE NORMALIZATION FIX: Ensure consistent case for option_type and position_type
+        normalized_legs = []
+        for leg in legs_data:
+            normalized_leg = leg.copy()
+            # Normalize option_type to lowercase: CALL/PUT → call/put
+            if "option_type" in normalized_leg and normalized_leg["option_type"]:
+                normalized_leg["option_type"] = normalized_leg["option_type"].lower()
+            # Normalize position_type to uppercase: buy/sell → BUY/SELL
+            if "position_type" in normalized_leg and normalized_leg["position_type"]:
+                normalized_leg["position_type"] = normalized_leg["position_type"].upper()
+            normalized_legs.append(normalized_leg)
+
         symbol     = strategy_data["symbol"]
         start_date = strategy_data["start_date"]
         end_date   = strategy_data["end_date"]
@@ -613,10 +654,10 @@ async def run_backtest(request: BacktestRequest):
 
         print(f"[RUN-BACKTEST] {symbol} | {start_date} → {end_date}")
         print(f"[RUN-BACKTEST] Strategy type : {strategy_data.get('strategy_type')}")
-        print(f"[RUN-BACKTEST] Legs count    : {len(legs_data)}")
+        print(f"[RUN-BACKTEST] Legs count    : {len(normalized_legs)}")
         print(f"[RUN-BACKTEST] DTE filter    : {dte_filter} → {dte_type}")
 
-        if not legs_data:
+        if not normalized_legs:
             raise HTTPException(status_code=400, detail={
                 "success": False, "error": "At least one leg is required"
             })
@@ -642,7 +683,7 @@ async def run_backtest(request: BacktestRequest):
 
         # ── Run real backtest simulation ─────────────────────────────────
         print("[RUN-BACKTEST] Simulating trades on real trading days...")
-        trades          = simulate_trades(trading_days, strategy_data, legs_data)
+        trades          = simulate_trades(trading_days, strategy_data, normalized_legs)
         summary         = compute_summary(trades)
         monthly_stats   = compute_monthly_stats(trades)
         cumulative_data = compute_cumulative_data(trades)

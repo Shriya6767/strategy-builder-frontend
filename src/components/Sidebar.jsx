@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, Settings, FileText, Activity, Key, ChevronRight, Save } from 'lucide-react';
+import { LayoutDashboard, Settings, FileText, Activity, Key, ChevronRight, Save, Briefcase } from 'lucide-react';
 
 const Sidebar = ({ activeTab, setActiveTab, onToggleSidebar }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -16,6 +16,7 @@ const Sidebar = ({ activeTab, setActiveTab, onToggleSidebar }) => {
     { id: 'live-dashboard', label: 'Live Trading', icon: Activity },
     { id: 'save-strategy', label: 'Strategies', icon: Save },
     { id: 'paper-trading', label: 'Paper Trading', icon: FileText },
+    { id: 'portfolios', label: 'Portfolios', icon: Briefcase },
   ];
 
   return (
@@ -29,7 +30,7 @@ const Sidebar = ({ activeTab, setActiveTab, onToggleSidebar }) => {
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
-          
+
           return (
             <button
               key={item.id}
@@ -39,9 +40,9 @@ const Sidebar = ({ activeTab, setActiveTab, onToggleSidebar }) => {
                   ? 'font-medium shadow-sm'
                   : 'text-gray-600 hover:bg-gray-50'
               }`}
-              style={isActive ? { 
-                backgroundColor: 'rgba(38, 97, 156, 0.1)', 
-                color: '#26619C' 
+              style={isActive ? {
+                backgroundColor: 'rgba(38, 97, 156, 0.1)',
+                color: '#26619C'
               } : {}}
             >
               <Icon size={20} className="transition-transform duration-200 group-hover:scale-110" />
@@ -49,10 +50,10 @@ const Sidebar = ({ activeTab, setActiveTab, onToggleSidebar }) => {
             </button>
           );
         })}
-        
+
         {/* Single Separator Icon - Fullscreen Toggle */}
         <div className="flex justify-center my-4">
-          <button 
+          <button
             onClick={handleToggleFullscreen}
             className="text-white rounded-full p-2 flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-110 active:scale-90 transition-all duration-200 cursor-pointer"
             style={{ backgroundColor: '#26619C' }}

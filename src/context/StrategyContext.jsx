@@ -10,8 +10,9 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
  * - Auto-syncs to localStorage on updates
  */
 
-// localStorage key for persisting strategy data
+// localStorage keys
 const STORAGE_KEY = 'strategy_session_data';
+const VERSION_MAP_KEY = 'strategy_versions_map'; // Maps strategy_name → version
 
 // Create Context
 const StrategyContext = createContext(undefined);
@@ -106,6 +107,7 @@ export const StrategyProvider = ({ children }) => {
 
   /**
    * UPDATE FUNCTION: Set strategy data (updates Context + localStorage)
+   * Also updates the version map (strategy_name → version mapping)
    * 
    * @param {string|number|null} strategy_id - Strategy ID
    * @param {string|null} strategy_name - Strategy name
@@ -124,7 +126,38 @@ export const StrategyProvider = ({ children }) => {
       version: version || null,
     });
 
+    // Update version map (strategy_name → version)
+    if (strategy_name && version !== null && version !== undefined) {
+      try {
+        const versionMap = JSON.parse(localStorage.getItem(VERSION_MAP_KEY) || '{}');
+        versionMap[strategy_name] = version;
+        localStorage.setItem(VERSION_MAP_KEY, JSON.stringify(versionMap));
+        console.log(`[StrategyContext] ✅ Version map updated: "${strategy_name}" → v${version}`);
+      } catch (error) {
+        console.error('[StrategyContext] ❌ Error updating version map:', error);
+      }
+    }
+
     console.log('[StrategyContext] ✅ Context updated (localStorage will auto-sync)');
+  };
+
+  /**
+   * GET VERSION BY STRATEGY NAME
+   * Retrieves the stored version for a specific strategy name
+   * 
+   * @param {string} strategy_name - Strategy name
+   * @returns {number|null} Version number or null if not found
+   */
+  const getVersionByName = (strategy_name) => {
+    try {
+      const versionMap = JSON.parse(localStorage.getItem(VERSION_MAP_KEY) || '{}');
+      const version = versionMap[strategy_name];
+      console.log(`[StrategyContext] 🔍 Looking up version for "${strategy_name}": ${version !== undefined ? 'v' + version : 'not found'}`);
+      return version !== undefined ? version : null;
+    } catch (error) {
+      console.error('[StrategyContext] ❌ Error reading version map:', error);
+      return null;
+    }
   };
 
   /**
@@ -170,6 +203,9 @@ export const StrategyProvider = ({ children }) => {
     
     // Update function
     updateStrategyData,
+    
+    // Get version by strategy name
+    getVersionByName,
     
     // Clear function
     clearStrategyData,

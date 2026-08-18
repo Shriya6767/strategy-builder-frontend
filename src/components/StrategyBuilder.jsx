@@ -1,12 +1,13 @@
 // eslint-disable-next-line unicode-bom
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Trash2, Calendar, DollarSign, Info, Clock, ChevronRight, Settings, ChevronLeft, Copy, Save, Play, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Calendar, DollarSign, Info, Clock, ChevronRight, Settings, ChevronLeft, Copy, Save, Play, RefreshCw, X } from 'lucide-react';
 import ToggleSwitch from './ToggleSwitch';
 import StrikeDropdown from './StrikeDropdown';
 import StrikeSelector from './StrikeSelector';
 import DateInput from './DateInput';
 import BacktestResults from './BacktestResults';
 import CompareBacktestSidebar from './CompareBacktestSidebar';
+import SaveStrategyModal from './SaveStrategyModal';
 import { API_URL } from '../services/api';
 import { compareBacktests } from '../services/strategyApi';
 import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Context hook
@@ -90,10 +91,160 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
     });
   };
 
+  // Function to create a sequential leg from modal configuration
+  const createSequentialLeg = () => {
+    console.log('[CREATE SEQUENTIAL LEG] Creating sequential leg with config:', sequentialLegConfig);
+    
+    // Get the parent leg index (which main leg this sequential leg belongs to)
+    const parentIndex = sequentialLegParentIndex;
+    
+    // Count main legs (not lazy, not sequential) up to and including the parent
+    const mainLegs = config.legs.filter(l => !l.isLazyLeg && !l.isSequentialLeg);
+    const parentMainLegPosition = mainLegs.findIndex((_, idx) => {
+      // Find which main leg position the parent is at
+      const mainLegIndex = config.legs.findIndex(l => l === mainLegs[idx]);
+      return mainLegIndex === parentIndex;
+    });
+    
+    // Sequential leg number should match its parent main leg number
+    const sequentialLegNumber = parentMainLegPosition + 1; // LEG#1 → SEQ#1, LEG#2 → SEQ#2
+    
+    // Determine the display name: use custom name if provided, otherwise use "SEQ#1", "SEQ#2", etc.
+    const displayName = sequentialLegConfig.customName.trim() 
+      ? sequentialLegConfig.customName.trim() 
+      : `SEQ#${sequentialLegNumber}`;
+    
+    // Convert sequential leg config to proper leg format
+    const sequentialLeg = {
+      id: Date.now(),
+      isSequentialLeg: true,  // Mark as sequential leg
+      sequentialLegNumber: sequentialLegNumber,  // For display purposes
+      parentLegIndex: parentIndex,  // Store which main leg this belongs to
+      customName: displayName,  // Store the custom or default name
+      
+      // Basic leg properties
+      lots: sequentialLegConfig.lots || '1',
+      expiry: sequentialLegConfig.expiry || '0dte',
+      position: sequentialLegConfig.position || 'buy',
+      option_type: sequentialLegConfig.option_type || 'call',
+      
+      // Strike criteria properties
+      strike_criteria: sequentialLegConfig.strike_criteria || 'based on points',
+      strike_type: sequentialLegConfig.atm_strike || 'atm',
+      atm_percent_direction: sequentialLegConfig.atm_percent_direction || '+',
+      atm_percent_value: sequentialLegConfig.atm_percent_value || '',
+      closest_premium_value: sequentialLegConfig.closest_premium_value || '',
+      lower_range: sequentialLegConfig.lower_range || '',
+      upper_range: sequentialLegConfig.upper_range || '',
+      
+      // Target, Stop Loss, Trail SL (now included for sequential legs)
+      target_enabled: sequentialLegConfig.target_enabled || false,
+      target_type: sequentialLegConfig.target_type || 'points',
+      target_value: sequentialLegConfig.target_value || '0.00',
+      stop_loss_enabled: sequentialLegConfig.stop_loss_enabled || false,
+      stop_loss_type: sequentialLegConfig.stop_loss_type || 'points',
+      stop_loss_value: sequentialLegConfig.stop_loss_value || '0.00',
+      trail_enabled: sequentialLegConfig.trail_sl_enabled || false,
+      trail_type: sequentialLegConfig.trail_sl_type || 'points',
+      trail_value: sequentialLegConfig.trail_sl_value || '0.00',
+      trail_lock_value: sequentialLegConfig.trail_sl_lock_value || '0.00',
+      
+      // Re-Entry (now included for sequential legs)
+      reentry_tgt_enabled: sequentialLegConfig.reentry_tgt_enabled || false,
+      reentry_tgt_mode: sequentialLegConfig.reentry_tgt_mode || 're_cost',
+      reentry_tgt_count: sequentialLegConfig.reentry_tgt_count || '0',
+      reentry_sl_enabled: sequentialLegConfig.reentry_sl_enabled || false,
+      reentry_sl_mode: sequentialLegConfig.reentry_sl_mode || 're_cost',
+      reentry_sl_count: sequentialLegConfig.reentry_sl_count || '0',
+      
+      // Momentum
+      momentum_enabled: sequentialLegConfig.momentum_enabled || false,
+      momentum_mode: sequentialLegConfig.momentum_type || 'points_up',
+      momentum_value: sequentialLegConfig.momentum_value || '',
+      
+      // Range Break Out (sequential legs CAN have this unlike lazy legs)
+      range_enabled: sequentialLegConfig.range_breakout_enabled || false,
+      range_instrument: sequentialLegConfig.range_instrument || 'underlying',
+      range_time: sequentialLegConfig.range_time || '14:45',
+      range_direction: sequentialLegConfig.range_direction || 'high',
+      
+      // Entry/Exit time (use current global settings)
+      entry_time: config.entry_time,
+      exit_time: config.exit_time,
+      
+      // Straddle ID
+      straddle_id: Date.now() % 10000
+    };
+    
+    console.log('[CREATE SEQUENTIAL LEG] Created sequential leg:', sequentialLeg);
+    
+    // Insert the sequential leg right after its parent leg
+    const updatedLegs = [...config.legs];
+    updatedLegs.splice(parentIndex + 1, 0, sequentialLeg);
+    
+    const newConfig = {
+      ...config,
+      legs: updatedLegs
+    };
+    setConfig(newConfig);
+    
+    // Close modal and reset config
+    setShowSequentialLegModal(false);
+    setSequentialLegParentIndex(null); // Reset parent index
+    setSequentialLegConfig({
+      customName: '',
+      lots: '1',
+      expiry: '0dte',
+      position: 'buy',
+      option_type: 'call',
+      strike_criteria: 'based on points',
+      atm_strike: 'atm',
+      atm_percent_direction: '+',
+      atm_percent_value: '',
+      closest_premium_value: '',
+      lower_range: '',
+      upper_range: '',
+      premium_value: '',
+      target_enabled: false,
+      target_type: 'points',
+      target_value: '',  // ✅ EMPTY
+      stop_loss_enabled: false,
+      stop_loss_type: 'points',
+      stop_loss_value: '',  // ✅ EMPTY
+      trail_sl_enabled: false,
+      trail_sl_type: 'points',
+      trail_sl_value: '',  // ✅ EMPTY
+      trail_sl_lock_value: '',  // ✅ EMPTY
+      reentry_tgt_enabled: false,
+      reentry_tgt_mode: 're_cost',
+      reentry_tgt_count: '',  // ✅ EMPTY
+      reentry_sl_enabled: false,
+      reentry_sl_mode: 're_cost',
+      reentry_sl_count: '',  // ✅ EMPTY
+      momentum_enabled: false,
+      momentum_type: 'points_up',
+      momentum_value: '',  // ✅ EMPTY
+      range_breakout_enabled: false,
+      range_instrument: 'underlying',
+      range_time: '14:45',
+      range_direction: 'high'
+    });
+  };
+
   // ? FIXED: Initialize from savedConfig (from parent) or defaults
   // DO NOT use localStorage - it causes stale data issues
   const [config, setConfig] = useState(() => {
     const initial = (savedConfig && Object.keys(savedConfig).length > 0) ? savedConfig : getDefaultConfig();
+    
+    // Debug log to check DTE filter value when loading
+    if (savedConfig && Object.keys(savedConfig).length > 0) {
+      console.log('[StrategyBuilder] Initializing from savedConfig:', {
+        strategy_type: initial.strategy_type,
+        dte_filter: initial.dte_filter,
+        dte_filter_type: typeof initial.dte_filter
+      });
+    }
+    
     return initial;
   });
 
@@ -108,12 +259,138 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
   });
   const [fetchingPremiums, setFetchingPremiums] = useState(false);
   
+  // Lazy Leg modal state
+  const [showLazyLegModal, setShowLazyLegModal] = useState(false);
+  const [lazyLegContext, setLazyLegContext] = useState(null); // { legIndex, type: 'target' | 'sl' }
+  const [lazyLegConfig, setLazyLegConfig] = useState({
+    customName: '',  // NEW: Custom name for lazy leg
+    lots: 1,
+    expiry: '0dte',
+    position: 'buy',
+    option_type: 'call',
+    strike_criteria: 'based on points',
+    atm_strike: 'atm',
+    // ATM Percent fields
+    atm_percent_direction: '+',
+    atm_percent_value: '',
+    // Closest Premium fields  
+    closest_premium_value: '',
+    // Premium Range fields
+    lower_range: '',
+    upper_range: '',
+    // Premium fields
+    premium_value: '',
+    target_enabled: false,      // Default OFF but fields visible
+    target_type: 'points',
+    target_value: '0.00',
+    stop_loss_enabled: false,   // Default OFF but fields visible
+    stop_loss_type: 'points', 
+    stop_loss_value: '0.00',
+    trail_sl_enabled: false,    // Default OFF but fields visible
+    trail_sl_type: 'points',
+    trail_sl_value: '0.00',
+    trail_sl_lock_value: '0.00',  // Added second Trail SL input
+    reentry_tgt_enabled: false, // Default OFF but fields visible
+    reentry_tgt_mode: 're_cost',
+    reentry_tgt_count: '1.00',
+    reentry_sl_enabled: false,  // Default OFF but fields visible
+    reentry_sl_mode: 're_cost',
+    reentry_sl_count: '1.00',
+    momentum_enabled: false,    // Default OFF but fields visible
+    momentum_type: 'points_up',
+    momentum_value: '0.00',
+    range_breakout_enabled: false, // Default OFF but fields visible
+    range_instrument: 'underlying',
+    range_time: '14.45',
+    range_direction: 'high'
+  });
+  
+  // Sequential Leg modal state
+  const [showSequentialLegModal, setShowSequentialLegModal] = useState(false);
+  const [sequentialLegParentIndex, setSequentialLegParentIndex] = useState(null); // Track which leg is creating the sequential leg
+  const [sequentialLegConfig, setSequentialLegConfig] = useState({
+    customName: '',  // Custom name for sequential leg
+    lots: '1',
+    expiry: '0dte',
+    position: 'buy',
+    option_type: 'call',
+    strike_criteria: 'based on points',
+    atm_strike: 'atm',
+    // ATM Percent fields
+    atm_percent_direction: '+',
+    atm_percent_value: '',
+    // Closest Premium fields  
+    closest_premium_value: '',
+    // Premium Range fields
+    lower_range: '',
+    upper_range: '',
+    // Premium fields
+    premium_value: '',
+    // Target fields
+    target_enabled: false,
+    target_type: 'points',
+    target_value: '',  // ✅ EMPTY instead of '0.00'
+    // Stop Loss fields
+    stop_loss_enabled: false,
+    stop_loss_type: 'points',
+    stop_loss_value: '',  // ✅ EMPTY instead of '0.00'
+    // Trail SL fields
+    trail_sl_enabled: false,
+    trail_sl_type: 'points',
+    trail_sl_value: '',  // ✅ EMPTY instead of '0.00'
+    trail_sl_lock_value: '',  // ✅ EMPTY instead of '0.00'
+    // Re-Entry On Target fields
+    reentry_tgt_enabled: false,
+    reentry_tgt_mode: 're_cost',
+    reentry_tgt_count: '',  // ✅ EMPTY instead of '1.00'
+    // Re-Entry On SL fields
+    reentry_sl_enabled: false,
+    reentry_sl_mode: 're_cost',
+    reentry_sl_count: '',  // ✅ EMPTY instead of '1.00'
+    // Momentum fields
+    momentum_enabled: false,
+    momentum_type: 'points_up',
+    momentum_value: '',  // ✅ EMPTY instead of '0.00'
+    // Range Breakout fields
+    range_breakout_enabled: false,
+    range_instrument: 'underlying',
+    range_time: '14:45',
+    range_direction: 'high'
+  });
+  
   // ? NEW: Refs for time input cursor control
   const entryTimeRef = useRef(null);
   const exitTimeRef = useRef(null);
   
   // Ref for Data Selection section (for scrolling on BTST validation)
   const dataSelectionRef = useRef(null);
+  
+  // ? NEW: State for custom lazy leg dropdown
+  const [lazyLegDropdownOpen, setLazyLegDropdownOpen] = useState({});
+  const [lazyLegExistingExpanded, setLazyLegExistingExpanded] = useState({});
+  const lazyLegDropdownRef = useRef({});
+  
+  // Handle click outside to close lazy leg dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      // Check all open dropdowns
+      Object.keys(lazyLegDropdownOpen).forEach(key => {
+        if (lazyLegDropdownOpen[key] && lazyLegDropdownRef.current[key]) {
+          if (!lazyLegDropdownRef.current[key].contains(event.target)) {
+            setLazyLegDropdownOpen(prev => ({ ...prev, [key]: false }));
+          }
+        }
+      });
+    };
+
+    // Only add listener if any dropdown is open
+    if (Object.values(lazyLegDropdownOpen).some(isOpen => isOpen)) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [lazyLegDropdownOpen]);
   
   // ? NEW: Persist dataLoaded state across tab switches
   const [dataLoaded, setDataLoaded] = useState(() => {
@@ -145,6 +422,10 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
   const [compareSidebarOpen, setCompareSidebarOpen] = useState(false);
   const [compareData, setCompareData] = useState([]);
   const [loadingCompare, setLoadingCompare] = useState(false);
+
+  // ? NEW: Save Strategy Modal state
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [saveAsNew, setSaveAsNew] = useState(false); // Track if saving as new strategy
 
   // ? NEW: Track original loaded config to detect changes
   const [originalConfig, setOriginalConfig] = useState(() => {
@@ -237,7 +518,8 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
     // Otherwise use defaults - ALL TOGGLES OFF, ALL VALUES EMPTY
     const strategyType = (savedConfig && savedConfig.strategy_type) || 'intraday';
     const dteFilter = (savedConfig && savedConfig.dte_filter) || '0';
-    const defaultExpiry = dteFilter === '0' ? '0dte' : '1dte';
+    // ✅ FIX: Combined DTE should default to 1dte, not 0dte
+    const defaultExpiry = (dteFilter === 'combined' || dteFilter === 'combine_dte') ? '1dte' : (dteFilter === '0' ? '0dte' : '1dte');
     
     return {
       segment: 'options',
@@ -260,7 +542,7 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       target_mode: 'points',
       target_value: '',  // ? EMPTY by default
       stop_loss_enabled: false,  // ? OFF by default
-      stop_loss_mode: strategyType === 'btst' ? 'btst_percent' : 'points',
+      stop_loss_mode: 'points',  // ✅ Default to 'points' - user can choose Points or Percentage
       stop_loss_value: '',  // ? EMPTY by default
       trail_enabled: false,
       trail_mode: 'points',
@@ -569,10 +851,18 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       newConfig.lock_profit_value2 = '';
     }
     
-    // ? NEW: When DTE Filter changes, update all leg expiry values
-    if (field === 'dte_filter') {
-      const newExpiry = value === '0' ? '0dte' : '1dte';
-      console.log('[DTE FILTER CHANGED] Updating all legs to:', newExpiry);
+    // ? NEW: When DTE Filter changes, auto-update all leg expiry values
+    // BUT skip this during initial strategy load (isLoadingConfigRef prevents infinite loops)
+    if (field === 'dte_filter' && !isLoadingConfigRef.current) {
+      let newExpiry;
+      if (value === 'combined' || value === 'combine_dte') {
+        // For combined mode, default to '1dte' for all legs
+        newExpiry = '1dte';
+        console.log('[DTE FILTER CHANGED] Combined mode selected - updating all legs to 1dte');
+      } else {
+        newExpiry = value === '0' ? '0dte' : '1dte';
+        console.log('[DTE FILTER CHANGED] Updating all legs to:', newExpiry);
+      }
       
       // Update all existing legs
       newConfig.legs = config.legs.map(leg => ({
@@ -591,6 +881,56 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       }
     }
     
+    // ? NEW: Validate strategy_type against dte_filter
+    if (field === 'strategy_type') {
+      const currentDTE = config.dte_filter;
+      const isCombined = currentDTE === 'combined' || currentDTE === 'combine_dte';
+      
+      // ⭐ IMPORTANT: Check if data is already loaded
+      // If data is loaded and incompatible, show warning and prevent selection
+      
+      // COMBINED DTE loaded + trying to select INTRADAY/SEQUENTIAL
+      if (isCombined && dataLoaded && (value === 'intraday' || value === 'sequential')) {
+        setResponsePopup({ 
+          type: 'error', 
+          title: 'Data incompatible with strategy type',
+          message: `Combined DTE data is already loaded. "${value.toUpperCase()}" strategy only works with 0DTE or 1DTE. Please change DTE Filter to 0DTE or 1DTE and reload data first.`
+        });
+        return; // Don't update the value
+      }
+      
+      // COMBINED DTE not loaded yet + trying to select INTRADAY/SEQUENTIAL
+      if (isCombined && !dataLoaded && (value === 'intraday' || value === 'sequential')) {
+        setResponsePopup({ 
+          type: 'error', 
+          title: 'Strategy type not compatible with Combined DTE',
+          message: `Strategy type "${value.toUpperCase()}" only works with 0DTE or 1DTE data. Combined DTE only supports BTST. Please change DTE Filter to 0DTE or 1DTE first.`
+        });
+        return; // Don't update the value
+      }
+      
+      // 0DTE or 1DTE loaded + trying to select BTST
+      if (!isCombined && dataLoaded && value === 'btst') {
+        const loadedDTE = currentDTE === '0' ? '0DTE' : '1DTE';
+        setResponsePopup({ 
+          type: 'error', 
+          title: 'Data incompatible with strategy type',
+          message: `${loadedDTE} data is already loaded. BTST strategy only works with Combined DTE. Please change DTE Filter to Combined and reload data first.`
+        });
+        return; // Don't update the value
+      }
+      
+      // 0DTE or 1DTE not loaded yet + trying to select BTST
+      if (!isCombined && !dataLoaded && value === 'btst') {
+        setResponsePopup({ 
+          type: 'error', 
+          title: 'Strategy type not compatible with single DTE',
+          message: 'BTST strategy type only works with Combined DTE. Please change DTE Filter to Combined first, or select Intraday/Sequential strategy type.'
+        });
+        return; // Don't update the value
+      }
+    }
+    
     // ? AUTO-SELECT STOP LOSS MODE based on strategy type
     if (field === 'strategy_type') {
       // Validate: BTST cannot be selected with 1DTE (dte_filter = 0)
@@ -604,7 +944,7 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
         }
         
         // Show error message above DTE Filter
-        setDteValidationError('Please select 1 DTE again and load data.');
+        setDteValidationError('Please select Combined (0DTE + 1DTE) and load data again.');
         
         // Hide error after 5 seconds
         setTimeout(() => {
@@ -618,15 +958,37 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       // Clear any DTE validation error when changing strategy type
       setDteValidationError(null);
       
-      // Update all legs' stop_loss_mode based on strategy type
+      // ⭐ FIX: When BTST is selected, set DTE Filter to combine_dte (if not already)
       if (value === 'btst') {
-        // BTST: Use 'btst_percent' mode
-        newConfig.legs = config.legs.map(leg => ({
-          ...leg,
-          stop_loss_mode: 'btst_percent'
-        }));
-        // Also update current leg being built
-        setCurrentLeg(prev => ({ ...prev, stop_loss_mode: 'btst_percent' }));
+        const isCombined = config.dte_filter === 'combined' || config.dte_filter === 'combine_dte';
+        
+        if (!isCombined) {
+          console.log('[STRATEGY TYPE] BTST selected - changing dte_filter to combine_dte and all legs to 1dte');
+          newConfig.dte_filter = 'combine_dte';
+        } else {
+          console.log('[STRATEGY TYPE] BTST selected - dte_filter already combined, keeping it');
+        }
+        
+        // Update all legs to 1dte for BTST (only if user is making the change, not during load)
+        if (!isLoadingConfigRef.current) {
+          newConfig.legs = config.legs.map(leg => ({
+            ...leg,
+            expiry: '1dte'
+          }));
+          // Also update current leg being built
+          setCurrentLeg(prev => ({ 
+            ...prev,
+            expiry: '1dte'
+          }));
+        }
+        
+        // ⭐ FIX: Only reset dataLoaded if current DTE is NOT combined
+        // BTST requires Combined DTE, so if we have 0DTE or 1DTE loaded, need to reload
+        if (dataLoaded && !isCombined) {
+          console.log('[STRATEGY TYPE] BTST selected with non-combined DTE - resetting Load Data button');
+          setDataLoaded(false);
+          setDataStatus(null);
+        }
       } else if (value === 'intraday' || value === 'sequential') {
         // Intraday/Sequential: Use 'points' mode
         newConfig.legs = config.legs.map(leg => ({
@@ -635,6 +997,15 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
         }));
         // Also update current leg being built
         setCurrentLeg(prev => ({ ...prev, stop_loss_mode: 'points' }));
+        
+        // ⭐ FIX: Only reset dataLoaded if current DTE is combined
+        // Intraday/Sequential require 0DTE or 1DTE, so if we have Combined loaded, need to reload
+        const isCombined = config.dte_filter === 'combined' || config.dte_filter === 'combine_dte';
+        if (dataLoaded && isCombined) {
+          console.log('[STRATEGY TYPE] Intraday/Sequential selected with combined DTE - resetting Load Data button');
+          setDataLoaded(false);
+          setDataStatus(null);
+        }
       }
     }
     
@@ -936,6 +1307,9 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       ...currentLeg,
       id: Date.now(),
       straddle_id: straddleId,
+      // ⭐ NORMALIZATION FIX: Ensure option_type is lowercase and position is lowercase
+      option_type: (currentLeg.option_type || 'call').toLowerCase(),  // call/put
+      position: (currentLeg.position || 'buy').toLowerCase(),  // buy/sell
       entry_time: currentLeg.entry_time || config.entry_time,  // Lock current time
       exit_time: currentLeg.exit_time || config.exit_time,     // Lock current time
       // Ensure ATM percent fields exist (for backward compatibility)
@@ -966,6 +1340,154 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
     setPremiumBasedCapital(null);
   };
 
+
+  // Function to create a lazy leg from modal configuration
+  const createLazyLeg = () => {
+    console.log('[CREATE LAZY LEG] Creating lazy leg with config:', lazyLegConfig);
+    
+    // Count existing lazy legs to determine the next number
+    const existingLazyLegs = config.legs.filter(leg => leg.isLazyLeg);
+    const lazyLegNumber = existingLazyLegs.length + 1;
+    
+    // Determine the display name: use custom name if provided, otherwise use "lazy1", "lazy2", etc.
+    const displayName = lazyLegConfig.customName.trim() 
+      ? lazyLegConfig.customName.trim() 
+      : `lazy${lazyLegNumber}`;
+    
+    // Convert lazy leg config to proper leg format
+    const lazyLeg = {
+      id: Date.now(),
+      isLazyLeg: true,  // Mark as lazy leg
+      lazyLegNumber: lazyLegNumber,  // For display purposes
+      customName: displayName,  // NEW: Store the custom or default name
+      
+      // Basic leg properties
+      lots: lazyLegConfig.lots || 1,
+      expiry: lazyLegConfig.expiry || '0dte',
+      position: lazyLegConfig.position || 'buy',
+      option_type: lazyLegConfig.option_type || 'call',
+      
+      // Strike criteria properties
+      strike_criteria: lazyLegConfig.strike_criteria || 'based on points',
+      strike_type: lazyLegConfig.atm_strike || 'atm',
+      atm_percent_direction: lazyLegConfig.atm_percent_direction || '+',
+      atm_percent_value: lazyLegConfig.atm_percent_value || '',
+      closest_premium_value: lazyLegConfig.closest_premium_value || '',
+      lower_range: lazyLegConfig.lower_range || '',
+      upper_range: lazyLegConfig.upper_range || '',
+      
+      // Target/Stop Loss/Trail SL
+      target_enabled: lazyLegConfig.target_enabled || false,
+      target_mode: lazyLegConfig.target_type || 'points',
+      target_value: lazyLegConfig.target_value || '',
+      
+      stop_loss_enabled: lazyLegConfig.stop_loss_enabled || false,
+      stop_loss_mode: lazyLegConfig.stop_loss_type || 'points',
+      stop_loss_value: lazyLegConfig.stop_loss_value || '',
+      
+      trail_enabled: lazyLegConfig.trail_sl_enabled || false,
+      trail_mode: lazyLegConfig.trail_sl_type || 'points',
+      trail_value: lazyLegConfig.trail_sl_value || '',
+      trail_lock_value: lazyLegConfig.trail_sl_lock_value || '',
+      
+      // Re-entry properties
+      reentry_tgt_enabled: lazyLegConfig.reentry_tgt_enabled || false,
+      reentry_tgt_mode: lazyLegConfig.reentry_tgt_mode || 're_cost',
+      reentry_tgt_count: lazyLegConfig.reentry_tgt_count || '1.00',
+      
+      reentry_sl_enabled: lazyLegConfig.reentry_sl_enabled || false,
+      reentry_sl_mode: lazyLegConfig.reentry_sl_mode || 're_cost',
+      reentry_sl_count: lazyLegConfig.reentry_sl_count || '1.00',
+      
+      // Momentum
+      momentum_enabled: lazyLegConfig.momentum_enabled || false,
+      momentum_type: lazyLegConfig.momentum_type || 'points_up',
+      momentum_value: lazyLegConfig.momentum_value || '',
+      
+      // Range Break Out
+      range_breakout_enabled: lazyLegConfig.range_breakout_enabled || false,
+      range_instrument: lazyLegConfig.range_instrument || 'underlying',
+      range_time: lazyLegConfig.range_time || '',
+      range_direction: lazyLegConfig.range_direction || 'high',
+      
+      // Entry/Exit time (use current global settings)
+      entry_time: config.entry_time,
+      exit_time: config.exit_time,
+      
+      // Straddle ID (assign new one for lazy legs)
+      straddle_id: Date.now() % 10000  // Simple ID for lazy legs
+    };
+    
+    console.log('[CREATE LAZY LEG] Created lazy leg:', lazyLeg);
+    
+    // Add the lazy leg to config
+    const updatedLegs = [...config.legs, lazyLeg];
+    
+    // If this lazy leg was created from a parent leg's re-entry, update that parent leg
+    if (lazyLegContext && lazyLegContext.legIndex !== undefined) {
+      const parentLegIndex = lazyLegContext.legIndex;
+      const fieldToUpdate = lazyLegContext.type === 'target' ? 'reentry_tgt_mode' : 'reentry_sl_mode';
+      
+      // Update the parent leg to reference this lazy leg by its ID
+      updatedLegs[parentLegIndex] = {
+        ...updatedLegs[parentLegIndex],
+        [fieldToUpdate]: `lazy_leg_${lazyLeg.id}` // Store lazy leg ID
+      };
+      
+      console.log(`[CREATE LAZY LEG] Updated parent leg ${parentLegIndex} ${fieldToUpdate} to reference lazy leg ${lazyLeg.id}`);
+    }
+    
+    const newConfig = {
+      ...config,
+      legs: updatedLegs
+    };
+    setConfig(newConfig);
+    
+    // Close modal and reset context
+    setShowLazyLegModal(false);
+    setLazyLegContext(null);
+    // Reset lazy leg config including custom name
+    setLazyLegConfig({
+      customName: '',
+      lots: 1,
+      expiry: '0dte',
+      position: 'buy',
+      option_type: 'call',
+      strike_criteria: 'based on points',
+      atm_strike: 'atm',
+      atm_percent_direction: '+',
+      atm_percent_value: '',
+      closest_premium_value: '',
+      lower_range: '',
+      upper_range: '',
+      premium_value: '',
+      target_enabled: false,
+      target_type: 'points',
+      target_value: '0.00',
+      stop_loss_enabled: false,
+      stop_loss_type: 'points',
+      stop_loss_value: '0.00',
+      trail_sl_enabled: false,
+      trail_sl_type: 'points',
+      trail_sl_value: '0.00',
+      trail_sl_lock_value: '0.00',
+      reentry_tgt_enabled: false,
+      reentry_tgt_mode: 're_cost',
+      reentry_tgt_count: '1.00',
+      reentry_sl_enabled: false,
+      reentry_sl_mode: 're_cost',
+      reentry_sl_count: '1.00',
+      momentum_enabled: false,
+      momentum_type: 'points_up',
+      momentum_value: '0.00',
+      range_breakout_enabled: false,
+      range_instrument: 'underlying',
+      range_time: '14.45',
+      range_direction: 'high'
+    });
+    
+    console.log('[CREATE LAZY LEG] Lazy leg created and added successfully!');
+  };
 
   const removeLeg = (id) => {
     const newConfig = {
@@ -1108,15 +1630,23 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       'based_on_atm_percent': 'atm percentage',
       'premium_range': 'premium range',
     };
+    
+    // Helper function to get mapped strike criteria (case-insensitive)
+    const getMappedStrikeCriteria = (criteria) => {
+      if (!criteria) return 'closest premium';
+      const normalized = criteria.toLowerCase().trim();
+      const mapped = strikeCriteriaMap[normalized] || criteria;
+      console.log('🔄 getMappedStrikeCriteria:', { input: criteria, normalized, mapped });
+      return mapped;
+    };
 
     // Helper: map UI type → backend type (stoploss, target, trail, etc.)
     // CRITICAL: Backend expects 'PERCENT', NOT 'PERCENTAGE'
-    // UI stores 'points', 'percentage', 'percent', 'btst_percent' etc.
+    // UI stores 'points', 'percentage', 'percent' etc.
     const typeMap = {
       'points':                'POINTS',
       'percentage':            'PERCENT',
       'percent':               'PERCENT',
-      'btst_percent':          'PERCENT',
       'mtm':                   'MTM',
       'underlying_points':     'UNDERLYING_POINTS',
       'underlying_percentage': 'UNDERLYING_PERCENT',
@@ -1161,8 +1691,8 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       're_cost_reverse':      'RE_COST_REVERSE',
     };
 
-    // Build legs array — every field from UI state, no hardcoded values
-    const legsArray = config.legs.map((leg, idx) => {
+    // Helper function to recursively build a leg object with nested lazy legs
+    const buildLegObject = (leg, idx, allLegs) => {
       // DEBUG: Log expiry value for each leg
       console.log(`[LEG ${idx}] Expiry Config:`, {
         expiry_raw: leg.expiry,
@@ -1187,7 +1717,7 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       // DEBUG: Log strike type configuration
       console.log(`[LEG ${idx}] Strike Type Config:`, {
         strike_criteria_raw: leg.strike_criteria,
-        strike_criteria_mapped: (strikeCriteriaMap[leg.strike_criteria] || leg.strike_criteria || 'closest premium').toLowerCase(),
+        strike_criteria_mapped: getMappedStrikeCriteria(leg.strike_criteria).toLowerCase(),
         strike_type_ui: leg.strike_type,
         atm_strike_mapped: leg.strike_criteria === 'closest premium' ? 'ATM' : formatStrikeTypeForBackend(leg.strike_type),
       });
@@ -1224,65 +1754,165 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
         percentage_atm_value: toNumber(leg.atm_percent_value),
       });
       
-      return {
-      lot_size:             toNumber(leg.lots),
-      position_type:        (leg.position || 'buy').toUpperCase(),
-      option_type:          (leg.option_type || 'call').toLowerCase(),
-      expiry_type:          leg.expiry ? leg.expiry : '0dte',  // Explicit check for truthy value
-      strike_criteria:      (strikeCriteriaMap[leg.strike_criteria] || leg.strike_criteria || 'closest premium').toLowerCase(),
-      // atm_strike: Populated for "based on points" and "atm percentage"; null for closest premium and premium range
-      atm_strike:           (leg.strike_criteria === 'based on points' || leg.strike_criteria === 'based_on_points' ||
-                             leg.strike_criteria === 'based on atm percent' || leg.strike_criteria === 'based_on_atm_percent' ||
-                             leg.strike_criteria === 'atm percentage')
-                            ? formatStrikeTypeForBackend(leg.strike_type)
-                            : null,
-      // strike_sign: For ATM%, use atm_percent_direction; otherwise use parseStrikeType
-      strike_sign:          (leg.strike_criteria === 'based on atm percent' || 
-                             leg.strike_criteria === 'based_on_atm_percent' ||
-                             leg.strike_criteria === 'atm percentage')
-                            ? (leg.atm_percent_direction === '-' ? '-' : '+')
-                            : parseStrikeType(leg.strike_type).sign,
-      // premium_value: the target premium amount
-      // Only relevant for specific criteria:
-      // - 'closest_premium' → use leg.strike_value (the "Nearest" input field)
-      // - 'premium_range' → use leg.premium_tolerance (the tolerance field)
-      // - 'strike_type' or 'based_on_points' → 0 (not used)
-      premium_value:        (leg.strike_criteria === 'closest premium' || leg.strike_criteria === 'closest_premium')
-                              ? toNumber(leg.strike_value)
-                              : ((leg.strike_criteria === 'premium range' || leg.strike_criteria === 'premium_range') ? toNumber(leg.premium_tolerance) : 0),
-      // ATM percent fields - send for ALL legs (backend needs it even if not used)
-      lower_range:          toNumber(leg.lower_range),
-      upper_range:          toNumber(leg.upper_range),
-      // multiplier_percentage: For ATM%, use atm_percent_value; otherwise use leg.multiplier_percentage
-      multiplier_percentage: (leg.strike_criteria === 'based on atm percent' || 
-                             leg.strike_criteria === 'based_on_atm_percent' ||
-                             leg.strike_criteria === 'atm percentage')
-                            ? toNumber(leg.atm_percent_value)
-                            : toNumber(leg.multiplier_percentage),
-      is_target:            leg.target_enabled || false,
-      target_type:          normalizeType(leg.target_mode),
-      target_value:         toNumber(leg.target_value),
-      is_stoploss:          leg.stop_loss_enabled || false,
-      stoploss_type:        normalizeType(leg.stop_loss_mode),
-      stoploss_value:       toNumber(leg.stop_loss_value),
-      is_trail_sl:          leg.trail_enabled || false,
-      trail_sl_type:        leg.trail_enabled ? normalizeType(leg.trail_mode) : null,
-      instrument_moves:     leg.trail_enabled ? toNumber(leg.trail_value) : null,
-      stoploss_moves:       leg.trail_enabled ? toNumber(leg.trail_lock_value) : null,  // Use trail_lock_value for stoploss_moves
-      is_reentry_sl:        leg.reentry_sl_enabled || false,
-      reentry_sl_type:      leg.reentry_sl_enabled ? (reentryModeMap[leg.reentry_sl_mode] || (leg.reentry_sl_mode ? leg.reentry_sl_mode.toUpperCase() : 'RE_ASAP')) : null,
-      reentry_sl_value:     leg.reentry_sl_enabled ? toNumber(leg.reentry_sl_count) : 0,
-      is_reentry_target:    leg.reentry_tgt_enabled || false,
-      reentry_target_type:  leg.reentry_tgt_enabled ? (reentryModeMap[leg.reentry_tgt_mode] || (leg.reentry_tgt_mode ? leg.reentry_tgt_mode.toUpperCase() : 'RE_ASAP')) : null,
-      reentry_target_value: leg.reentry_tgt_enabled ? toNumber(leg.reentry_tgt_count) : 0,
-      is_simple_momentum:   leg.momentum_enabled || false,
-      momentum_type:        normalizeMomentumType(leg.momentum_mode),
-      momentum_value:       toNumber(leg.momentum_value),
-      is_range_breakout:    leg.range_enabled || false,
-      range_breakout_type:  leg.range_enabled ? (leg.range_instrument === 'instrument' ? 'Instrument' : 'Underlying') : null,
-      range_end_time:       leg.range_enabled ? formatTime(leg.range_time) : null,
-      range_on:             leg.range_enabled ? ((leg.range_direction || 'high').charAt(0).toUpperCase() + (leg.range_direction || 'high').slice(1)) : null,
-    }});
+      // Build base leg object
+      const legObject = {
+        // ⭐ Add leg_name ONLY for lazy legs (isLazyLeg === true)
+        ...(leg.isLazyLeg && { leg_name: leg.customName || `lazy${leg.lazyLegNumber}` || null }),
+        lot_size:             toNumber(leg.lots),
+        position_type:        (leg.position || 'buy').toUpperCase(),
+        option_type:          (leg.option_type || 'call').toLowerCase(),
+        expiry_type:          leg.expiry ? leg.expiry : '0dte',
+        strike_criteria:      getMappedStrikeCriteria(leg.strike_criteria).toLowerCase(),
+        atm_strike:           (leg.strike_criteria === 'based on points' || leg.strike_criteria === 'based_on_points' ||
+                               leg.strike_criteria === 'based on atm percent' || leg.strike_criteria === 'based_on_atm_percent' ||
+                               leg.strike_criteria === 'atm percentage')
+                              ? formatStrikeTypeForBackend(leg.strike_type)
+                              : null,
+        strike_sign:          (leg.strike_criteria === 'based on atm percent' || 
+                               leg.strike_criteria === 'based_on_atm_percent' ||
+                               leg.strike_criteria === 'atm percentage')
+                              ? (leg.atm_percent_direction === '-' ? '-' : '+')
+                              : parseStrikeType(leg.strike_type).sign,
+        premium_value:        (leg.strike_criteria === 'closest premium' || leg.strike_criteria === 'closest_premium')
+                                ? toNumber(leg.strike_value)
+                                : ((leg.strike_criteria === 'premium range' || leg.strike_criteria === 'premium_range') ? toNumber(leg.premium_tolerance) : 0),
+        lower_range:          toNumber(leg.lower_range),
+        upper_range:          toNumber(leg.upper_range),
+        multiplier_percentage: (leg.strike_criteria === 'based on atm percent' || 
+                               leg.strike_criteria === 'based_on_atm_percent' ||
+                               leg.strike_criteria === 'atm percentage')
+                              ? toNumber(leg.atm_percent_value)
+                              : toNumber(leg.multiplier_percentage),
+        is_target:            leg.target_enabled || false,
+        target_type:          normalizeType(leg.target_mode),
+        target_value:         toNumber(leg.target_value),
+        is_stoploss:          leg.stop_loss_enabled || false,
+        stoploss_type:        normalizeType(leg.stop_loss_mode),
+        stoploss_value:       toNumber(leg.stop_loss_value),
+        is_trail_sl:          leg.trail_enabled || false,
+        trail_sl_type:        leg.trail_enabled ? normalizeType(leg.trail_mode) : null,
+        instrument_moves:     leg.trail_enabled ? toNumber(leg.trail_value) : null,
+        stoploss_moves:       leg.trail_enabled ? toNumber(leg.trail_lock_value) : null,
+        is_reentry_sl:        leg.reentry_sl_enabled || false,
+        reentry_sl_type:      null,
+        reentry_sl_value:     0,
+        is_reentry_target:    leg.reentry_tgt_enabled || false,
+        reentry_target_type:  null,
+        reentry_target_value: 0,
+        is_simple_momentum:   leg.momentum_enabled || false,
+        momentum_type:        normalizeMomentumType(leg.momentum_mode),
+        momentum_value:       toNumber(leg.momentum_value),
+        // Only include range breakout fields for non-lazy legs
+        ...(leg.isLazyLeg ? {} : {
+          is_range_breakout:    leg.range_enabled || false,
+          range_breakout_type:  leg.range_enabled ? (leg.range_instrument === 'instrument' ? 'Instrument' : 'Underlying') : null,
+          range_end_time:       leg.range_enabled ? formatTime(leg.range_time) : null,
+          range_on:             leg.range_enabled ? ((leg.range_direction || 'high').charAt(0).toUpperCase() + (leg.range_direction || 'high').slice(1)) : null,
+        }),
+      };
+
+      // Handle re-entry on SL
+      // ⭐ IMPORTANT: Sequential legs should NEVER have lazy leg configurations
+      if (leg.reentry_sl_enabled) {
+        if (!leg.isSequentialLeg && leg.reentry_sl_mode && leg.reentry_sl_mode.startsWith('lazy_leg_')) {
+          // Extract lazy leg ID
+          const lazyLegId = parseInt(leg.reentry_sl_mode.replace('lazy_leg_', ''));
+          const referencedLazyLeg = allLegs.find(l => l.id === lazyLegId);
+          
+          if (referencedLazyLeg) {
+            legObject.reentry_sl_type = 'LAZY_LEG';
+            legObject.reentry_sl_value = 1;
+            // Recursively build the nested lazy leg
+            legObject.lazy_leg = buildLegObject(referencedLazyLeg, idx, allLegs);
+            // Add leg_name to lazy_leg for identification
+            if (referencedLazyLeg.customName) {
+              legObject.lazy_leg.leg_name = referencedLazyLeg.customName;
+            }
+          } else {
+            legObject.reentry_sl_type = 'RE_ASAP';
+            legObject.reentry_sl_value = toNumber(leg.reentry_sl_count);
+          }
+        } else {
+          legObject.reentry_sl_type = reentryModeMap[leg.reentry_sl_mode] || (leg.reentry_sl_mode ? leg.reentry_sl_mode.toUpperCase() : 'RE_ASAP');
+          legObject.reentry_sl_value = toNumber(leg.reentry_sl_count);
+        }
+      } else {
+        // When toggle is OFF, set values to 0
+        legObject.reentry_sl_value = 0;
+      }
+
+      // Handle re-entry on Target
+      // ⭐ IMPORTANT: Sequential legs should NEVER have lazy leg configurations
+      if (leg.reentry_tgt_enabled) {
+        if (!leg.isSequentialLeg && leg.reentry_tgt_mode && leg.reentry_tgt_mode.startsWith('lazy_leg_')) {
+          // Extract lazy leg ID
+          const lazyLegId = parseInt(leg.reentry_tgt_mode.replace('lazy_leg_', ''));
+          const referencedLazyLeg = allLegs.find(l => l.id === lazyLegId);
+          
+          if (referencedLazyLeg) {
+            legObject.reentry_target_type = 'LAZY_LEG';
+            legObject.reentry_target_value = 1;
+            // Recursively build the nested lazy leg for target re-entry
+            // Note: If both SL and Target have lazy legs, SL takes precedence (set first)
+            if (!legObject.lazy_leg) {
+              legObject.lazy_leg = buildLegObject(referencedLazyLeg, idx, allLegs);
+              // Add leg_name to lazy_leg for identification
+              if (referencedLazyLeg.customName) {
+                legObject.lazy_leg.leg_name = referencedLazyLeg.customName;
+              }
+            }
+          } else {
+            legObject.reentry_target_type = 'RE_ASAP';
+            legObject.reentry_target_value = toNumber(leg.reentry_tgt_count);
+          }
+        } else {
+          legObject.reentry_target_type = reentryModeMap[leg.reentry_tgt_mode] || (leg.reentry_tgt_mode ? leg.reentry_tgt_mode.toUpperCase() : 'RE_ASAP');
+          legObject.reentry_target_value = toNumber(leg.reentry_tgt_count);
+        }
+      } else {
+        // When toggle is OFF, set values to 0
+        legObject.reentry_target_value = 0;
+      }
+
+      return legObject;
+    };
+
+    // Build legs array — filter out lazy legs AND sequential legs, then add sequential legs as nested objects
+    const allLegs = config.legs;
+    const mainLegs = allLegs.filter(leg => !leg.isLazyLeg && !leg.isSequentialLeg);
+    
+    const legsArray = mainLegs.map((leg, idx) => {
+      const legObject = buildLegObject(leg, idx, allLegs);
+      
+      // ⭐ NEW: If this is a sequential strategy, check if this main leg has a sequential leg
+      if (config.strategy_type === 'sequential') {
+        // Find the index of this main leg in the original config.legs array
+        const mainLegIndex = allLegs.findIndex(l => l.id === leg.id);
+        // Find the sequential leg that belongs to this main leg
+        const sequentialLeg = allLegs.find(l => l.isSequentialLeg && l.parentLegIndex === mainLegIndex);
+        
+        if (sequentialLeg) {
+          // Build the sequential leg object and nest it
+          const sequentialLegObject = buildLegObject(sequentialLeg, idx, allLegs);
+          // Add leg_name for sequential leg
+          sequentialLegObject.leg_name = sequentialLeg.customName || `SEQ#${sequentialLeg.sequentialLegNumber}`;
+          legObject.sequential_leg = sequentialLegObject;
+        }
+      }
+      
+      return legObject;
+    });
+
+    // DEBUG: Log the transformation
+    console.log('🔄 LAZY LEG TRANSFORMATION ========================================');
+    console.log('📥 INPUT - config.legs (UI state):', config.legs.length, 'legs');
+    config.legs.forEach((leg, i) => {
+      console.log(`  [${i}] ${leg.isLazyLeg ? '🔗 LAZY LEG' : '⭐ MAIN LEG'} - ID: ${leg.id}`);
+    });
+    console.log('📤 OUTPUT - legsArray (backend payload):', legsArray.length, 'legs');
+    console.log('🔍 Legs sent to backend (should only be main legs):');
+    console.log(JSON.stringify(legsArray, null, 2));
+    console.log('🔄 ========================================');
 
     // Build strategy object — every field from UI state, no hardcoded values
     // ? IMPORTANT: strategy_id and strategy_name MUST be FIRST TWO parameters
@@ -1310,8 +1940,18 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       symbol:                          config.symbol,
       start_date:                      config.start_date,
       end_date:                        config.end_date,
-      dte_filter:                      toNumber(config.dte_filter),
-      underlying_type:                 config.underlying_from === 'futures' ? 'futures' : 'option',
+      dte_filter:                      (() => {
+        // Convert combined/combine_dte to 1 for BTST (database stores 0 or 1 only)
+        if (config.strategy_type === 'btst') {
+          if (config.dte_filter === 'combined' || config.dte_filter === 'combine_dte') {
+            return 1;
+          }
+          return config.dte_filter ? toNumber(config.dte_filter) : 1;
+        }
+        // For non-BTST, keep original value
+        return toNumber(config.dte_filter);
+      })(),
+      underlying_type:                 config.underlying_from === 'futures' ? 'futures' : 'cash',
       is_squareoff:                    config.square_off === 'complete',
       is_trail_sl_break_even:          config.trail_to_be || false,
       trail_sl_break_even_type:        config.trail_sl_break_even_type && config.trail_sl_break_even_type !== 'na' ? normalizeType(config.trail_sl_break_even_type) : 'POINTS',
@@ -1328,10 +1968,10 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       strategy_target_value:           toNumber(config.overall_target_value),
       is_overall_reentry_sl:           config.overall_reentry_sl_enabled || false,
       overall_reentry_sl_type:         config.overall_reentry_sl_enabled ? (reentryModeMap[config.overall_reentry_sl_mode] || (config.overall_reentry_sl_mode ? config.overall_reentry_sl_mode.toUpperCase() : 'RE_ASAP')) : null,
-      overall_reentry_sl_value:        toNumber(config.overall_reentry_sl_count),
+      overall_reentry_sl_value:        config.overall_reentry_sl_enabled ? toNumber(config.overall_reentry_sl_count) : 0,
       is_overall_reentry_target:       config.overall_reentry_tgt_enabled || false,
       overall_reentry_target_type:     config.overall_reentry_tgt_enabled ? (reentryModeMap[config.overall_reentry_tgt_mode] || (config.overall_reentry_tgt_mode ? config.overall_reentry_tgt_mode.toUpperCase() : 'RE_ASAP')) : null,
-      overall_reentry_target_value:    toNumber(config.overall_reentry_tgt_count),
+      overall_reentry_target_value:    config.overall_reentry_tgt_enabled ? toNumber(config.overall_reentry_tgt_count) : 0,
       is_overall_trail_sl:             config.lock_profit_enabled || false,
       overall_trail_sl_type:           config.lock_profit_enabled ? normalizeType(config.lock_profit_mode) : 'POINTS',
       overall_instrument_move:         config.lock_profit_enabled ? toNumber(config.lock_profit_value1) : 0,
@@ -1703,10 +2343,19 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
     setDataLoaded(false);
 
     // ── Request payload ───────────────────────────────────────────────────
+    let dteType;
+    if (config.dte_filter === 'combine_dte') {
+      dteType = 'combined_dte';
+    } else if (config.dte_filter === 'combined') {
+      dteType = 'combined_dte';
+    } else {
+      dteType = config.dte_filter === '0' || config.dte_filter === 0 ? '0dte' : '1dte';
+    }
+    
     const requestPayload = {
       start_date: config.start_date,
       end_date:   config.end_date,
-      dte_type:   config.dte_filter === '0' || config.dte_filter === 0 ? '0dte' : '1dte',
+      dte_type:   dteType,
       symbol:     config.symbol,
     };
 
@@ -1836,9 +2485,17 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
               {/* DTE Filter */}
               <div className="flex-shrink-0" style={{ width: '180px' }}>
                 <label className="block text-base font-semibold text-slate-700 mb-2">DTE Filter</label>
-                <select value={config.dte_filter} onChange={(e) => handleChange('dte_filter', e.target.value)} className="w-full px-6 py-3 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-lg font-medium hover:border-slate-400 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
+                <select 
+                  value={config.dte_filter} 
+                  onChange={(e) => {
+                    const newDteFilter = e.target.value;
+                    handleChange('dte_filter', newDteFilter);
+                  }} 
+                  className="w-full px-6 py-3 border border-slate-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white text-lg font-medium hover:border-slate-400 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
+                >
                   <option value="0">0DTE</option>
                   <option value="1">1DTE</option>
+                  <option value="combine_dte">Combined DTE</option>
                 </select>
               </div>
 
@@ -2021,34 +2678,30 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
             </div>
 
             {/* Entry Time */}
-            {config.strategy_type !== 'sequential' && (
-              <div className="flex items-center gap-6">
-                <label className="text-base font-semibold text-slate-700 whitespace-nowrap">Entry Time (UTC)</label>
-                <input 
-                  ref={entryTimeRef}
-                  type="text" 
-                  value={config.entry_time} 
-                  onChange={(e) => handleTimeInput(e.target.value, 'entry_time', entryTimeRef)} 
-                  placeholder="13:30" 
-                  className="px-4 py-3 text-lg border border-slate-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent w-20 font-medium bg-white hover:border-slate-400 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200" 
-                />
-              </div>
-            )}
+            <div className="flex items-center gap-6">
+              <label className="text-base font-semibold text-slate-700 whitespace-nowrap">Entry Time (UTC)</label>
+              <input 
+                ref={entryTimeRef}
+                type="text" 
+                value={config.entry_time} 
+                onChange={(e) => handleTimeInput(e.target.value, 'entry_time', entryTimeRef)} 
+                placeholder="13:30" 
+                className="px-4 py-3 text-lg border border-slate-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent w-20 font-medium bg-white hover:border-slate-400 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200" 
+              />
+            </div>
 
             {/* Exit Time */}
-            {config.strategy_type !== 'sequential' && (
-              <div className="flex items-center gap-6">
-                <label className="text-base font-semibold text-slate-700 whitespace-nowrap">Exit Time (UTC)</label>
-                <input 
-                  ref={exitTimeRef}
-                  type="text" 
-                  value={config.exit_time} 
-                  onChange={(e) => handleTimeInput(e.target.value, 'exit_time', exitTimeRef)} 
-                  placeholder="20:00" 
-                  className="px-4 py-3 text-lg border border-slate-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent w-20 font-medium bg-white hover:border-slate-400 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200" 
-                />
-              </div>
-            )}
+            <div className="flex items-center gap-6">
+              <label className="text-base font-semibold text-slate-700 whitespace-nowrap">Exit Time (UTC)</label>
+              <input 
+                ref={exitTimeRef}
+                type="text" 
+                value={config.exit_time} 
+                onChange={(e) => handleTimeInput(e.target.value, 'exit_time', exitTimeRef)} 
+                placeholder="20:00" 
+                className="px-4 py-3 text-lg border border-slate-300 rounded-2xl focus:ring-2 focus:ring-blue-500 focus:border-transparent w-20 font-medium bg-white hover:border-slate-400 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200" 
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -2272,7 +2925,7 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                 </div>
                 <div className="flex flex-col flex-1">
                   <label className="text-xs font-semibold text-slate-700 mb-1">%</label>
-                  <div className="relative">
+                  <div className="relative flex items-center">
                     <input 
                       type="number" 
                       min="0"
@@ -2280,10 +2933,10 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                       value={currentLeg.atm_percent_value ?? ''} 
                       onChange={(e) => handleLegChange('atm_percent_value', e.target.value)}
                       onFocus={handleNumberFocus}
-                      className="w-full px-3 py-2 pr-8 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
-                      placeholder=""
+                      className="w-full px-3 py-2 pr-10 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                      placeholder="0"
                     />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-gray-600">%</span>
+                    <span className="absolute right-3 text-sm font-medium text-gray-600 pointer-events-none">%</span>
                   </div>
                 </div>
               </div>
@@ -2368,36 +3021,1270 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
       </div>
     </div>
 
-      {/* ADDED LEGS - STRUCTURED LAYOUT MATCHING LEG BUILDER DESIGN */}
-      {config.legs.length > 0 && (
-        <div className="mx-12">
-          {config.legs.map((leg, legIndex) => (
-            <div key={leg.id} className="w-full bg-white rounded-lg shadow-xl border border-white overflow-hidden mb-8 animate-fade-in">
-              {/* Header */}
-              <div className="px-6 bg-white border-b border-gray-300" style={{ paddingTop: '25px', paddingBottom: '25px' }}>
-                <div className="flex justify-between items-center">
-                  <h3 className="text-base font-bold uppercase" style={{ color: '#4682b4' }}>LEG#{legIndex + 1}</h3>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => { const updated = [...config.legs]; updated.splice(legIndex + 1, 0, { ...leg, id: Date.now() }); setConfig({ ...config, legs: updated }); }}
-                      className="p-1.5 bg-blue-50 text-blue-500 hover:bg-blue-100 hover:scale-125 active:scale-90 rounded transition-all duration-200"
-                      title="Duplicate leg"
+      {/* Lazy Leg Configuration Modal - EXACT REPLICA OF LEG BUILDER */}
+      {showLazyLegModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white sticky top-0 z-10">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-800">Create New Lazy Leg</h2>
+                <p className="text-xs text-gray-500 mt-1">Configure a lazy leg that will be created when re-entry condition is met</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowLazyLegModal(false);
+                  setLazyLegContext(null);
+                  // Reset lazy leg config
+                  setLazyLegConfig({
+                    customName: '',
+                    lots: 1,
+                    expiry: '0dte',
+                    position: 'buy',
+                    option_type: 'call',
+                    strike_criteria: 'based on points',
+                    atm_strike: 'atm',
+                    atm_percent_direction: '+',
+                    atm_percent_value: '',
+                    closest_premium_value: '',
+                    lower_range: '',
+                    upper_range: '',
+                    premium_value: '',
+                    target_enabled: false,
+                    target_type: 'points',
+                    target_value: '0.00',
+                    stop_loss_enabled: false,
+                    stop_loss_type: 'points',
+                    stop_loss_value: '0.00',
+                    trail_sl_enabled: false,
+                    trail_sl_type: 'points',
+                    trail_sl_value: '0.00',
+                    trail_sl_lock_value: '0.00',
+                    reentry_tgt_enabled: false,
+                    reentry_tgt_mode: 're_cost',
+                    reentry_tgt_count: '1.00',
+                    reentry_sl_enabled: false,
+                    reentry_sl_mode: 're_cost',
+                    reentry_sl_count: '1.00',
+                    momentum_enabled: false,
+                    momentum_type: 'points_up',
+                    momentum_value: '0.00',
+                    range_breakout_enabled: false,
+                    range_instrument: 'underlying',
+                    range_time: '14.45',
+                    range_direction: 'high'
+                  });
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            {/* Modal Body - Scrollable Content */}
+            <div className="flex-1 overflow-y-auto">
+              {/* Name Input Section */}
+              <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Enter Leg Name</label>
+                <input
+                  type="text"
+                  value={lazyLegConfig.customName}
+                  onChange={(e) => setLazyLegConfig({...lazyLegConfig, customName: e.target.value})}
+                  placeholder={`lazy${config.legs.filter(leg => leg.isLazyLeg).length + 1}`}
+                  className="w-64 px-4 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                />
+              </div>
+              
+              {/* LEG BUILDER REPLICA - Exact same layout as in the main component */}
+              <div className="w-full bg-white rounded-lg shadow-xl border border-white overflow-hidden animate-fade-in">
+                {/* Content */}
+                <div className="space-y-8" style={{ paddingLeft: '25px', paddingRight: '25px', paddingTop: '26px', paddingBottom: '26px' }}>
+                  {/* Row 1: Total Lot / Expiry / Position / Option Type */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-17">
+                    {/* Total Lot */}
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-700 mb-1">Total Lot</label>
+                      <input 
+                        type="number" 
+                        min="0"
+                        step="1"
+                        value={lazyLegConfig.lots} 
+                        onChange={(e) => { 
+                          const val = Number(e.target.value);
+                          if (val < 0) {
+                            setResponsePopup({ type: 'error', title: 'Total Lot cannot be negative' });
+                            return;
+                          }
+                          setLazyLegConfig({...lazyLegConfig, lots: val}); 
+                        }} 
+                        className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200" 
+                        placeholder="1"
+                      />
+                    </div>
+
+                    {/* Expiry */}
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-700 mb-1">Expiry</label>
+                      <select 
+                        value={lazyLegConfig.expiry} 
+                        onChange={(e) => setLazyLegConfig({...lazyLegConfig, expiry: e.target.value})} 
+                        className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                      >
+                        <option value="0dte">0DTE</option>
+                        <option value="1dte">1DTE</option>
+                      </select>
+                    </div>
+
+                    {/* Position */}
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-700 mb-1">Position</label>
+                      <div className="flex gap-0.5 bg-gray-200 rounded-lg p-0.5">
+                        <button
+                          onClick={() => setLazyLegConfig({...lazyLegConfig, position: 'buy'})}
+                          className={`flex-1 px-3 py-2 rounded text-sm font-semibold hover:scale-105 active:scale-95 transition-all duration-200 ${
+                            lazyLegConfig.position === 'buy'
+                              ? 'text-white shadow-sm'
+                              : 'bg-transparent text-gray-600'
+                          }`}
+                          style={lazyLegConfig.position === 'buy' ? { backgroundColor: '#4682b4' } : {}}
+                        >
+                          Buy
+                        </button>
+                        <button
+                          onClick={() => setLazyLegConfig({...lazyLegConfig, position: 'sell'})}
+                          className={`flex-1 px-3 py-2 rounded text-sm font-semibold hover:scale-105 active:scale-95 transition-all duration-200 ${
+                            lazyLegConfig.position === 'sell'
+                              ? 'text-white shadow-sm'
+                              : 'bg-transparent text-gray-600'
+                          }`}
+                          style={lazyLegConfig.position === 'sell' ? { backgroundColor: '#4682b4' } : {}}
+                        >
+                          Sell
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Option Type */}
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-700 mb-1">Option Type</label>
+                      <div className="flex gap-0.5 bg-gray-200 rounded-lg p-0.5">
+                        <button
+                          onClick={() => setLazyLegConfig({...lazyLegConfig, option_type: 'call'})}
+                          className={`flex-1 px-3 py-2 rounded text-sm font-semibold hover:scale-105 active:scale-95 transition-all duration-200 ${
+                            lazyLegConfig.option_type === 'call'
+                              ? 'text-white shadow-sm'
+                              : 'bg-transparent text-gray-600'
+                          }`}
+                          style={lazyLegConfig.option_type === 'call' ? { backgroundColor: '#4682b4' } : {}}
+                        >
+                          Call
+                        </button>
+                        <button
+                          onClick={() => setLazyLegConfig({...lazyLegConfig, option_type: 'put'})}
+                          className={`flex-1 px-3 py-2 rounded text-sm font-semibold hover:scale-105 active:scale-95 transition-all duration-200 ${
+                            lazyLegConfig.option_type === 'put'
+                              ? 'text-white shadow-sm'
+                              : 'bg-transparent text-gray-600'
+                          }`}
+                          style={lazyLegConfig.option_type === 'put' ? { backgroundColor: '#4682b4' } : {}}
+                        >
+                          Put
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Strike Criteria / ATM Strike / Dynamic Fields */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-17">
+                    {/* Strike Criteria */}
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-700 mb-1">Strike Criteria</label>
+                      <select 
+                        value={lazyLegConfig.strike_criteria} 
+                        onChange={(e) => setLazyLegConfig({...lazyLegConfig, strike_criteria: e.target.value})} 
+                        className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                      >
+                        <option value="based on points">Based On Strike</option>
+                        <option value="based on atm percent">Based On ATM %</option>
+                        <option value="based on premium range">Based On premium range</option>
+                        <option value="closest premium">Based On Closest Premium</option>
+                      </select>
+                    </div>
+
+                    {/* ATM Strike - Only show when Strike Criteria is "Based On Strike" */}
+                    {lazyLegConfig.strike_criteria === 'based on points' && (
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">ATM Strike</label>
+                        <select 
+                          value={lazyLegConfig.atm_strike} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, atm_strike: e.target.value})} 
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        >
+                          <option value="itm_20">ITM-20</option>
+                          <option value="itm_19">ITM-19</option>
+                          <option value="itm_18">ITM-18</option>
+                          <option value="itm_17">ITM-17</option>
+                          <option value="itm_16">ITM-16</option>
+                          <option value="itm_15">ITM-15</option>
+                          <option value="itm_14">ITM-14</option>
+                          <option value="itm_13">ITM-13</option>
+                          <option value="itm_12">ITM-12</option>
+                          <option value="itm_11">ITM-11</option>
+                          <option value="itm_10">ITM-10</option>
+                          <option value="itm_9">ITM-9</option>
+                          <option value="itm_8">ITM-8</option>
+                          <option value="itm_7">ITM-7</option>
+                          <option value="itm_6">ITM-6</option>
+                          <option value="itm_5">ITM-5</option>
+                          <option value="itm_4">ITM-4</option>
+                          <option value="itm_3">ITM-3</option>
+                          <option value="itm_2">ITM-2</option>
+                          <option value="itm_1">ITM-1</option>
+                          <option value="atm">ATM</option>
+                          <option value="otm_1">OTM-1</option>
+                          <option value="otm_2">OTM-2</option>
+                          <option value="otm_3">OTM-3</option>
+                          <option value="otm_4">OTM-4</option>
+                          <option value="otm_5">OTM-5</option>
+                          <option value="otm_6">OTM-6</option>
+                          <option value="otm_7">OTM-7</option>
+                          <option value="otm_8">OTM-8</option>
+                          <option value="otm_9">OTM-9</option>
+                          <option value="otm_10">OTM-10</option>
+                          <option value="otm_11">OTM-11</option>
+                          <option value="otm_12">OTM-12</option>
+                          <option value="otm_13">OTM-13</option>
+                          <option value="otm_14">OTM-14</option>
+                          <option value="otm_15">OTM-15</option>
+                          <option value="otm_16">OTM-16</option>
+                          <option value="otm_17">OTM-17</option>
+                          <option value="otm_18">OTM-18</option>
+                          <option value="otm_19">OTM-19</option>
+                          <option value="otm_20">OTM-20</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {/* ATM Direction - Only show when Strike Criteria is "Based On ATM %" */}
+                    {lazyLegConfig.strike_criteria === 'based on atm percent' && (
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">ATM</label>
+                        <select
+                          value={lazyLegConfig.atm_percent_direction}
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, atm_percent_direction: e.target.value})}
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        >
+                          <option value="+">+</option>
+                          <option value="-">-</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {/* ATM Percentage - Only show when Strike Criteria is "Based On ATM %" */}
+                    {lazyLegConfig.strike_criteria === 'based on atm percent' && (
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">%</label>
+                        <div className="relative">
+                          <input 
+                            type="number" 
+                            min="0"
+                            step="0.01"
+                            value={lazyLegConfig.atm_percent_value} 
+                            onChange={(e) => setLazyLegConfig({...lazyLegConfig, atm_percent_value: e.target.value})}
+                            onFocus={handleNumberFocus}
+                            className="w-full px-3 py-2 pr-8 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                            placeholder="0.00"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-gray-600">%</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Lower Range - Only show when Strike Criteria is "Based On premium range" */}
+                    {lazyLegConfig.strike_criteria === 'based on premium range' && (
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">Lower Range</label>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.lower_range} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, lower_range: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </div>
+                    )}
+
+                    {/* Upper Range - Only show when Strike Criteria is "Based On premium range" */}
+                    {lazyLegConfig.strike_criteria === 'based on premium range' && (
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">Upper Range</label>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.upper_range} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, upper_range: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </div>
+                    )}
+
+                    {/* Nearest - Only show when Strike Criteria is "Based On Closest Premium" */}
+                    {lazyLegConfig.strike_criteria === 'closest premium' && (
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">Nearest</label>
+                        <input 
+                          type="number" 
+                          min="0"
+                          step="0.01"
+                          value={lazyLegConfig.closest_premium_value} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, closest_premium_value: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Row 3: Target / Stop Loss / Trail SL */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-17">
+                    {/* Target */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 mb-1">
+                        <label className="text-xs font-semibold text-slate-700">Target</label>
+                        <ToggleSwitch 
+                          checked={lazyLegConfig.target_enabled} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, target_enabled: e.target.checked})} 
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <select 
+                          value={lazyLegConfig.target_type} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, target_type: e.target.value})} 
+                          disabled={!lazyLegConfig.target_enabled}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        >
+                          <option value="points">Points</option>
+                          <option value="percentage">Percentage</option>
+                          <option value="underlying_points">Underlying Points</option>
+                          <option value="underlying_percentage">Underlying Percentage</option>
+                        </select>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.target_value} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, target_value: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          disabled={!lazyLegConfig.target_enabled}
+                          className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Stop Loss */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 mb-1">
+                        <label className="text-xs font-semibold text-slate-700">Stop Loss</label>
+                        <ToggleSwitch 
+                          checked={lazyLegConfig.stop_loss_enabled} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, stop_loss_enabled: e.target.checked})} 
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <select 
+                          value={lazyLegConfig.stop_loss_type} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, stop_loss_type: e.target.value})} 
+                          disabled={!lazyLegConfig.stop_loss_enabled}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        >
+                          <option value="points">Points</option>
+                          <option value="percentage">Percentage</option>
+                          <option value="underlying_points">Underlying Points</option>
+                          <option value="underlying_percentage">Underlying Percentage</option>
+                        </select>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.stop_loss_value} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, stop_loss_value: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          disabled={!lazyLegConfig.stop_loss_enabled}
+                          className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Trail SL */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 mb-1">
+                        <label className="text-xs font-semibold text-slate-700">Trail SL</label>
+                        <ToggleSwitch 
+                          checked={lazyLegConfig.trail_sl_enabled} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, trail_sl_enabled: e.target.checked})} 
+                        />
+                      </div>
+                      <div className="flex gap-1">
+                        <select 
+                          value={lazyLegConfig.trail_sl_type} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, trail_sl_type: e.target.value})} 
+                          disabled={!lazyLegConfig.trail_sl_enabled}
+                          className="flex-1 min-w-0 px-2 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        >
+                          <option value="points">Points</option>
+                          <option value="percentage">Percentage</option>
+                        </select>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.trail_sl_value} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, trail_sl_value: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          disabled={!lazyLegConfig.trail_sl_enabled}
+                          className="flex-1 min-w-0 px-2 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.trail_sl_lock_value} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, trail_sl_lock_value: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          disabled={!lazyLegConfig.trail_sl_enabled}
+                          className="flex-1 min-w-0 px-2 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Row 4: Re-Entry Options */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-17">
+                    {/* Re-Entry On Target */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 mb-1">
+                        <label className="text-xs font-semibold text-slate-700">Re-Entry On Target</label>
+                        <ToggleSwitch 
+                          checked={lazyLegConfig.reentry_tgt_enabled} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, reentry_tgt_enabled: e.target.checked})} 
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <select 
+                          value={lazyLegConfig.reentry_tgt_mode} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, reentry_tgt_mode: e.target.value})} 
+                          disabled={!lazyLegConfig.reentry_tgt_enabled}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        >
+                          <option value="re_cost">RE COST</option>
+                          <option value="re_asap">RE ASAP</option>
+                          <option value="re_asap_rev">RE ASAP REV</option>
+                          <option value="re_momentum">RE MOMENTUM</option>
+                          <option value="re_momentum_rev">RE MOMENTUM REV</option>
+                          <option value="re_cost_rev">RE COST REV</option>
+                          <option value="lazy_leg">Lazy Leg</option>
+                        </select>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.reentry_tgt_count} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, reentry_tgt_count: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          disabled={!lazyLegConfig.reentry_tgt_enabled}
+                          className="w-16 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          placeholder="1.00"
+                          min="1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Re-Entry On SL */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 mb-1">
+                        <label className="text-xs font-semibold text-slate-700">Re-Entry On SL</label>
+                        <ToggleSwitch 
+                          checked={lazyLegConfig.reentry_sl_enabled} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, reentry_sl_enabled: e.target.checked})} 
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <select 
+                          value={lazyLegConfig.reentry_sl_mode} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, reentry_sl_mode: e.target.value})} 
+                          disabled={!lazyLegConfig.reentry_sl_enabled}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        >
+                          <option value="re_cost">RE COST</option>
+                          <option value="re_asap">RE ASAP</option>
+                          <option value="re_asap_rev">RE ASAP REV</option>
+                          <option value="re_momentum">RE MOMENTUM</option>
+                          <option value="re_momentum_rev">RE MOMENTUM REV</option>
+                          <option value="re_cost_rev">RE COST REV</option>
+                          <option value="lazy_leg">Lazy Leg</option>
+                        </select>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.reentry_sl_count} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, reentry_sl_count: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          disabled={!lazyLegConfig.reentry_sl_enabled}
+                          className="w-16 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          placeholder="1.00"
+                          min="1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Simple Momentum */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 mb-1">
+                        <label className="text-xs font-semibold text-slate-700">Simple Momentum</label>
+                        <ToggleSwitch 
+                          checked={lazyLegConfig.momentum_enabled} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, momentum_enabled: e.target.checked})} 
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <select 
+                          value={lazyLegConfig.momentum_type} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, momentum_type: e.target.value})} 
+                          disabled={!lazyLegConfig.momentum_enabled}
+                          className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        >
+                          <option value="points_up">Points ↑</option>
+                          <option value="points_down">Points ↓</option>
+                          <option value="percent_up">Percent ↑</option>
+                          <option value="percent_down">Percent ↓</option>
+                          <option value="underlying_points_up">Underlying Points ↑</option>
+                          <option value="underlying_points_down">Underlying Points ↓</option>
+                          <option value="underlying_percent_up">Underlying Percent ↑</option>
+                          <option value="underlying_percent_down">Underlying Percent ↓</option>
+                        </select>
+                        <input 
+                          type="number" 
+                          value={lazyLegConfig.momentum_value} 
+                          onChange={(e) => setLazyLegConfig({...lazyLegConfig, momentum_value: e.target.value})}
+                          onFocus={handleNumberFocus}
+                          disabled={!lazyLegConfig.momentum_enabled}
+                          className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 sticky bottom-0">
+              <button
+                onClick={() => {
+                  setShowLazyLegModal(false);
+                  setLazyLegContext(null);
+                }}
+                className="px-6 py-2 text-gray-700 hover:text-gray-900 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createLazyLeg}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-all shadow-sm"
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sequential Leg Configuration Modal */}
+      {showSequentialLegModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white sticky top-0 z-10">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-800">
+                  Create Sequential Leg for {sequentialLegParentIndex !== null ? `LEG#${sequentialLegParentIndex + 1}` : 'LEG'}
+                </h2>
+                <p className="text-xs text-gray-500 mt-1">Configure a sequential leg that will be created when entry condition is met</p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowSequentialLegModal(false);
+                  setSequentialLegParentIndex(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Modal Body - Scrollable Content - FULL LEG BUILDER */}
+            <div className="flex-1 overflow-y-auto">
+              {/* Name Input Section - Matching Lazy Leg Style */}
+              <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Enter Leg Name</label>
+                <input
+                  type="text"
+                  value={sequentialLegConfig.customName}
+                  onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, customName: e.target.value})}
+                  placeholder="SEQ1"
+                  className="w-64 px-4 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                />
+              </div>
+              
+              {/* LEG BUILDER REPLICA - Exact same layout as in the main component */}
+              <div className="w-full bg-white rounded-lg shadow-xl border border-white overflow-hidden animate-fade-in">
+                {/* Content */}
+                <div className="space-y-8" style={{ paddingLeft: '25px', paddingRight: '25px', paddingTop: '26px', paddingBottom: '26px' }}>
+
+                {/* Row 1: Total Lot / Expiry / Position / Option Type */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-17">
+                  {/* Total Lot */}
+                  <div className="flex flex-col">
+                    <label className="text-xs font-semibold text-slate-700 mb-1">Total Lot</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={sequentialLegConfig.lots}
+                      onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, lots: e.target.value})}
+                      className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                    />
+                  </div>
+
+                  {/* Expiry */}
+                  <div className="flex flex-col">
+                    <label className="text-xs font-semibold text-slate-700 mb-1">Expiry</label>
+                    <select
+                      value={sequentialLegConfig.expiry}
+                      onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, expiry: e.target.value})}
+                      className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                     >
-                      <Copy size={16} />
+                      <option value="0dte">0DTE</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+
+                  {/* Position */}
+                  <div className="flex flex-col">
+                    <label className="text-xs font-semibold text-slate-700 mb-1">Position</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setSequentialLegConfig({...sequentialLegConfig, position: 'buy'})}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                          sequentialLegConfig.position === 'buy'
+                            ? 'text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        style={sequentialLegConfig.position === 'buy' ? { backgroundColor: '#4682b4' } : {}}
+                      >
+                        Buy
+                      </button>
+                      <button
+                        onClick={() => setSequentialLegConfig({...sequentialLegConfig, position: 'sell'})}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                          sequentialLegConfig.position === 'sell'
+                            ? 'text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        style={sequentialLegConfig.position === 'sell' ? { backgroundColor: '#4682b4' } : {}}
+                      >
+                        Sell
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Option Type */}
+                  <div className="flex flex-col">
+                    <label className="text-xs font-semibold text-slate-700 mb-1">Option Type</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setSequentialLegConfig({...sequentialLegConfig, option_type: 'call'})}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                          sequentialLegConfig.option_type === 'call'
+                            ? 'text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        style={sequentialLegConfig.option_type === 'call' ? { backgroundColor: '#4682b4' } : {}}
+                      >
+                        Call
+                      </button>
+                      <button
+                        onClick={() => setSequentialLegConfig({...sequentialLegConfig, option_type: 'put'})}
+                        className={`flex-1 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+                          sequentialLegConfig.option_type === 'put'
+                            ? 'text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        style={sequentialLegConfig.option_type === 'put' ? { backgroundColor: '#4682b4' } : {}}
+                      >
+                        Put
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 2: Strike Criteria - ALL FIELDS IN ONE LINE (like intraday main leg) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-17">
+                  {/* Strike Criteria */}
+                  <div className="flex flex-col">
+                    <label className="text-xs font-semibold text-slate-700 mb-1">Strike Criteria</label>
+                    <select
+                      value={sequentialLegConfig.strike_criteria}
+                      onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, strike_criteria: e.target.value})}
+                      className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                    >
+                      <option value="based on points">Based On Strike</option>
+                      <option value="based on atm percent">Based On ATM %</option>
+                      <option value="based on premium range">Based On premium range</option>
+                      <option value="closest premium">Based On Closest Premium</option>
+                    </select>
+                  </div>
+
+                  {/* ATM Strike - Only show when "Based On Strike" is selected */}
+                  {sequentialLegConfig.strike_criteria === 'based on points' && (
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-700 mb-1">ATM Strike</label>
+                      <select
+                        value={sequentialLegConfig.atm_strike || 'atm'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, atm_strike: e.target.value})}
+                        className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                      >
+                        <option value="itm_20">ITM-20</option>
+                        <option value="itm_19">ITM-19</option>
+                        <option value="itm_18">ITM-18</option>
+                        <option value="itm_17">ITM-17</option>
+                        <option value="itm_16">ITM-16</option>
+                        <option value="itm_15">ITM-15</option>
+                        <option value="itm_14">ITM-14</option>
+                        <option value="itm_13">ITM-13</option>
+                        <option value="itm_12">ITM-12</option>
+                        <option value="itm_11">ITM-11</option>
+                        <option value="itm_10">ITM-10</option>
+                        <option value="itm_9">ITM-9</option>
+                        <option value="itm_8">ITM-8</option>
+                        <option value="itm_7">ITM-7</option>
+                        <option value="itm_6">ITM-6</option>
+                        <option value="itm_5">ITM-5</option>
+                        <option value="itm_4">ITM-4</option>
+                        <option value="itm_3">ITM-3</option>
+                        <option value="itm_2">ITM-2</option>
+                        <option value="itm_1">ITM-1</option>
+                        <option value="atm">ATM</option>
+                        <option value="otm_1">OTM-1</option>
+                        <option value="otm_2">OTM-2</option>
+                        <option value="otm_3">OTM-3</option>
+                        <option value="otm_4">OTM-4</option>
+                        <option value="otm_5">OTM-5</option>
+                        <option value="otm_6">OTM-6</option>
+                        <option value="otm_7">OTM-7</option>
+                        <option value="otm_8">OTM-8</option>
+                        <option value="otm_9">OTM-9</option>
+                        <option value="otm_10">OTM-10</option>
+                        <option value="otm_11">OTM-11</option>
+                        <option value="otm_12">OTM-12</option>
+                        <option value="otm_13">OTM-13</option>
+                        <option value="otm_14">OTM-14</option>
+                        <option value="otm_15">OTM-15</option>
+                        <option value="otm_16">OTM-16</option>
+                        <option value="otm_17">OTM-17</option>
+                        <option value="otm_18">OTM-18</option>
+                        <option value="otm_19">OTM-19</option>
+                        <option value="otm_20">OTM-20</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Nearest - Only show when Based On Closest Premium is selected */}
+                  {sequentialLegConfig.strike_criteria === 'closest premium' && (
+                    <div className="flex flex-col">
+                      <label className="text-xs font-semibold text-slate-700 mb-1">Nearest</label>
+                      <input 
+                        type="number" 
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.strike_value ?? ''} 
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, strike_value: e.target.value})}
+                        className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  )}
+
+                  {/* ATM % Fields - Only show when "Based On ATM %" is selected */}
+                  {sequentialLegConfig.strike_criteria === 'based on atm percent' && (
+                    <>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">ATM Strike</label>
+                        <select
+                          value={sequentialLegConfig.atm_percent_direction || '+'}
+                          onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, atm_percent_direction: e.target.value})}
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                        >
+                          <option value="+">+</option>
+                          <option value="-">-</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">Multiplier (%)</label>
+                        <div className="relative">
+                          <input 
+                            type="number" 
+                            min="0"
+                            step="0.01"
+                            value={sequentialLegConfig.atm_percent_value ?? ''} 
+                            onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, atm_percent_value: e.target.value})}
+                            className="w-full px-3 py-2 pr-8 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                            placeholder="0"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-gray-600">%</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Premium Range Fields - Only show when "Based On premium range" is selected */}
+                  {sequentialLegConfig.strike_criteria === 'based on premium range' && (
+                    <>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">Lower Range</label>
+                        <input 
+                          type="number" 
+                          min="0"
+                          step="0.01"
+                          value={sequentialLegConfig.lower_range ?? ''} 
+                          onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, lower_range: e.target.value})}
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-700 mb-1">Upper Range</label>
+                        <input 
+                          type="number" 
+                          min="0"
+                          step="0.01"
+                          value={sequentialLegConfig.upper_range ?? ''} 
+                          onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, upper_range: e.target.value})}
+                          className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+                          placeholder="0"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+
+                {/* Row 3: Target / Stop Loss / Trail SL */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-17">
+                  {/* Target */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-1">
+                      <label className="text-xs font-semibold text-slate-700">Target</label>
+                      <ToggleSwitch
+                        checked={sequentialLegConfig.target_enabled || false}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, target_enabled: e.target.checked})}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <select
+                        value={sequentialLegConfig.target_type || 'points'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, target_type: e.target.value})}
+                        disabled={!sequentialLegConfig.target_enabled}
+                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="points">Points</option>
+                        <option value="percentage">Percentage</option>
+                        <option value="underlying_points">Underlying Points</option>
+                        <option value="underlying_percentage">Underlying Percentage</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.target_value || '0.00'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, target_value: e.target.value})}
+                        disabled={!sequentialLegConfig.target_enabled}
+                        className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Stop Loss */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-1">
+                      <label className="text-xs font-semibold text-slate-700">Stop Loss</label>
+                      <ToggleSwitch
+                        checked={sequentialLegConfig.stop_loss_enabled || false}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, stop_loss_enabled: e.target.checked})}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <select
+                        value={sequentialLegConfig.stop_loss_type || 'points'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, stop_loss_type: e.target.value})}
+                        disabled={!sequentialLegConfig.stop_loss_enabled}
+                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="points">Points</option>
+                        <option value="percentage">Percentage</option>
+                        <option value="underlying_points">Underlying Points</option>
+                        <option value="underlying_percentage">Underlying Percentage</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.stop_loss_value ?? ''}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, stop_loss_value: e.target.value})}
+                        disabled={!sequentialLegConfig.stop_loss_enabled}
+                        className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Trail SL */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-1">
+                      <label className="text-xs font-semibold text-slate-700">Trail SL</label>
+                      <ToggleSwitch
+                        checked={sequentialLegConfig.trail_sl_enabled || false}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, trail_sl_enabled: e.target.checked})}
+                      />
+                    </div>
+                    <div className="flex gap-1">
+                      <select
+                        value={sequentialLegConfig.trail_sl_type || 'points'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, trail_sl_type: e.target.value})}
+                        disabled={!sequentialLegConfig.trail_sl_enabled}
+                        className="flex-1 min-w-0 px-2 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="points">Points</option>
+                        <option value="percentage">Percentage</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.trail_sl_value || '0.00'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, trail_sl_value: e.target.value})}
+                        disabled={!sequentialLegConfig.trail_sl_enabled}
+                        className="flex-1 min-w-0 px-2 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        placeholder="0.00"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.trail_sl_lock_value || '0.00'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, trail_sl_lock_value: e.target.value})}
+                        disabled={!sequentialLegConfig.trail_sl_enabled}
+                        className="flex-1 min-w-0 px-2 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 4: Re-Entry On Target / Re-Entry On SL / Simple Momentum */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-17">
+                  {/* Re-Entry On Target */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-1">
+                      <label className="text-xs font-semibold text-slate-700">Re-Entry On Target</label>
+                      <ToggleSwitch
+                        checked={sequentialLegConfig.reentry_tgt_enabled || false}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, reentry_tgt_enabled: e.target.checked})}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <select
+                        value={sequentialLegConfig.reentry_tgt_mode || 're_cost'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, reentry_tgt_mode: e.target.value})}
+                        disabled={!sequentialLegConfig.reentry_tgt_enabled}
+                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="re_cost">RE COST</option>
+                        <option value="re_asap">RE ASAP</option>
+                        <option value="re_asap_rev">RE ASAP REV</option>
+                        <option value="re_momentum">RE MOMENTUM</option>
+                        <option value="re_momentum_rev">RE MOMENTUM REV</option>
+                        <option value="re_cost_rev">RE COST REV</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.reentry_tgt_count || '1.00'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, reentry_tgt_count: e.target.value})}
+                        disabled={!sequentialLegConfig.reentry_tgt_enabled}
+                        className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        placeholder="1.00"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Re-Entry On SL */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-1">
+                      <label className="text-xs font-semibold text-slate-700">Re-Entry On SL</label>
+                      <ToggleSwitch
+                        checked={sequentialLegConfig.reentry_sl_enabled || false}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, reentry_sl_enabled: e.target.checked})}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <select
+                        value={sequentialLegConfig.reentry_sl_mode || 're_cost'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, reentry_sl_mode: e.target.value})}
+                        disabled={!sequentialLegConfig.reentry_sl_enabled}
+                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="re_cost">RE COST</option>
+                        <option value="re_asap">RE ASAP</option>
+                        <option value="re_asap_rev">RE ASAP REV</option>
+                        <option value="re_momentum">RE MOMENTUM</option>
+                        <option value="re_momentum_rev">RE MOMENTUM REV</option>
+                        <option value="re_cost_rev">RE COST REV</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.reentry_sl_count || '1.00'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, reentry_sl_count: e.target.value})}
+                        disabled={!sequentialLegConfig.reentry_sl_enabled}
+                        className="w-20 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        placeholder="1.00"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Simple Momentum */}
+                  <div className="flex flex-col">
+                    <div className="flex items-center gap-2 mb-1">
+                      <label className="text-xs font-semibold text-slate-700">Simple Momentum</label>
+                      <ToggleSwitch
+                        checked={sequentialLegConfig.momentum_enabled || false}
+                        onChange={(e) => {
+                          if (e.target.checked && sequentialLegConfig.range_breakout_enabled) {
+                            setResponsePopup({
+                              type: 'error',
+                              title: 'Please disable Range Break Out first.'
+                            });
+                            return;
+                          }
+                          setSequentialLegConfig({...sequentialLegConfig, momentum_enabled: e.target.checked});
+                        }}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <select
+                        value={sequentialLegConfig.momentum_type || 'points'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, momentum_type: e.target.value})}
+                        disabled={!sequentialLegConfig.momentum_enabled}
+                        className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                      >
+                        <option value="points">Points ↑</option>
+                        <option value="points_down">Points ↓</option>
+                        <option value="percentage">Percent ↑</option>
+                        <option value="percentage_down">Percent ↓</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={sequentialLegConfig.momentum_value || '0.00'}
+                        onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, momentum_value: e.target.value})}
+                        disabled={!sequentialLegConfig.momentum_enabled}
+                        className="w-24 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Row 5: Range Break Out (Full width like in the image) */}
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2 mb-2">
+                    <label className="text-xs font-semibold text-slate-700">Range Break Out</label>
+                    <ToggleSwitch
+                      checked={sequentialLegConfig.range_breakout_enabled || false}
+                      onChange={(e) => {
+                        if (e.target.checked && sequentialLegConfig.momentum_enabled) {
+                          setResponsePopup({
+                            type: 'error',
+                            title: 'Please disable Simple Momentum first.'
+                          });
+                          return;
+                        }
+                        setSequentialLegConfig({...sequentialLegConfig, range_breakout_enabled: e.target.checked});
+                      }}
+                    />
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <select
+                      value={sequentialLegConfig.range_instrument}
+                      onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, range_instrument: e.target.value})}
+                      disabled={!sequentialLegConfig.range_breakout_enabled}
+                      className="px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    >
+                      <option value="instrument">Instrument</option>
+                      <option value="underlying">Underlying</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={sequentialLegConfig.range_time}
+                      onChange={(e) => setSequentialLegConfig({...sequentialLegConfig, range_time: e.target.value})}
+                      disabled={!sequentialLegConfig.range_breakout_enabled}
+                      placeholder="14:45"
+                      className="w-24 px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 hover:shadow-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50"
+                    />
+                    <button
+                      onClick={() => setSequentialLegConfig({...sequentialLegConfig, range_direction: 'high'})}
+                      disabled={!sequentialLegConfig.range_breakout_enabled}
+                      className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                        sequentialLegConfig.range_direction === 'high' && sequentialLegConfig.range_breakout_enabled
+                          ? 'text-white shadow-md'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                      style={sequentialLegConfig.range_direction === 'high' && sequentialLegConfig.range_breakout_enabled ? { backgroundColor: '#4682b4' } : {}}
+                    >
+                      High
                     </button>
                     <button
-                      onClick={() => removeLeg(leg.id)}
-                      className="p-1.5 bg-red-50 text-red-500 hover:bg-red-100 hover:scale-125 active:scale-90 rounded transition-all duration-200"
-                      title="Remove leg"
+                      onClick={() => setSequentialLegConfig({...sequentialLegConfig, range_direction: 'low'})}
+                      disabled={!sequentialLegConfig.range_breakout_enabled}
+                      className={`px-4 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                        sequentialLegConfig.range_direction === 'low' && sequentialLegConfig.range_breakout_enabled
+                          ? 'text-white shadow-md'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                      style={sequentialLegConfig.range_direction === 'low' && sequentialLegConfig.range_breakout_enabled ? { backgroundColor: '#4682b4' } : {}}
                     >
-                      <Trash2 size={16} />
+                      Low
                     </button>
                   </div>
                 </div>
               </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 sticky bottom-0">
+              <button
+                onClick={() => {
+                  setShowSequentialLegModal(false);
+                  setSequentialLegParentIndex(null);
+                }}
+                className="px-6 py-2 text-gray-700 hover:text-gray-900 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={createSequentialLeg}
+                className="px-6 py-2 text-white rounded-lg hover:bg-blue-700 font-medium transition-all shadow-sm"
+                style={{ backgroundColor: '#4682b4' }}
+              >
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ADDED LEGS - STRUCTURED LAYOUT MATCHING LEG BUILDER DESIGN */}
+      {config.legs.length > 0 && (
+        <div className="mx-12">
+          {/* Sort legs: MAIN and SEQUENTIAL legs in order, LAZY legs at the end */}
+          {[...config.legs]
+            .sort((a, b) => {
+              // LAZY legs go to the end
+              if (a.isLazyLeg && !b.isLazyLeg) return 1;
+              if (!a.isLazyLeg && b.isLazyLeg) return -1;
+              // Otherwise keep original order (MAIN legs and their SEQUENTIAL legs stay together)
+              return 0;
+            })
+            .map((leg, displayIndex) => {
+              // Find the actual index in the original config.legs array
+              const legIndex = config.legs.findIndex(l => l.id === leg.id);
+              
+              // Calculate the main leg number by counting only main legs up to this point
+              const sortedLegs = [...config.legs].sort((a, b) => {
+                if (a.isLazyLeg && !b.isLazyLeg) return 1;
+                if (!a.isLazyLeg && b.isLazyLeg) return -1;
+                return 0;
+              });
+              const mainLegNumber = sortedLegs
+                .slice(0, displayIndex + 1)
+                .filter(l => !l.isLazyLeg && !l.isSequentialLeg)
+                .length;
+              
+              return (
+              <div key={leg.id} className="w-full bg-white rounded-lg shadow-xl border border-white overflow-visible mb-8 pb-6 animate-fade-in">
+                {/* Header */}
+                <div className="px-6 bg-white border-b border-gray-300" style={{ paddingTop: '25px', paddingBottom: '25px' }}>
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-base font-bold uppercase" style={{ color: '#4682b4' }}>
+                      {leg.isSequentialLeg 
+                        ? (leg.customName || `SEQ#${leg.sequentialLegNumber}`)
+                        : leg.isLazyLeg 
+                          ? (leg.customName || `Lazy Leg #${leg.lazyLegNumber}`) 
+                          : `LEG#${mainLegNumber}`}
+                    </h3>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { 
+                          const updated = [...config.legs]; 
+                          let duplicatedLeg = { ...leg, id: Date.now() };
+                          
+                          // If duplicating a lazy leg, update the lazy leg number
+                          if (leg.isLazyLeg) {
+                            const existingLazyLegs = updated.filter(l => l.isLazyLeg);
+                            duplicatedLeg.lazyLegNumber = existingLazyLegs.length + 1;
+                          }
+                          
+                          updated.splice(legIndex + 1, 0, duplicatedLeg); 
+                          setConfig({ ...config, legs: updated }); 
+                        }}
+                        disabled={leg.isSequentialLeg}
+                        className="p-1.5 bg-blue-50 text-blue-500 hover:bg-blue-100 hover:scale-125 active:scale-90 rounded transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={leg.isSequentialLeg ? "Cannot duplicate sequential legs" : "Duplicate leg"}
+                      >
+                        <Copy size={16} />
+                      </button>
+                      <button
+                        onClick={() => removeLeg(leg.id)}
+                        className="p-1.5 bg-red-50 text-red-500 hover:bg-red-100 hover:scale-125 active:scale-90 rounded transition-all duration-200"
+                        title="Remove leg"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
               {/* Content */}
-              <div className="space-y-8" style={{ paddingLeft: '25px', paddingRight: '25px', paddingTop: '26px', paddingBottom: '26px' }}>
+              <div className="space-y-8" style={{ 
+                paddingLeft: '25px', 
+                paddingRight: '25px', 
+                paddingTop: '26px', 
+                paddingBottom: config.strategy_type === 'sequential' && !leg.isLazyLeg && !leg.isSequentialLeg ? '30px' : '26px' 
+              }}>
                 {/* Row 1: Total Lot / Expiry / Position / Option Type */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-17">
                   {/* Total Lot */}
@@ -2713,7 +4600,8 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                 </div>
               </div>
 
-              {/* Row 3: Target / Stop Loss / Trail SL */}
+              {/* Row 3: Target / Stop Loss / Trail SL - Hide ONLY for Sequential strategy in main legs, but SHOW for Sequential leg cards */}
+              {(config.strategy_type !== 'sequential' || leg.isSequentialLeg) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="flex flex-col space-y-2" style={{ paddingLeft: '25px', paddingRight: '25px' }}>
                   <div className="flex items-center gap-2">
@@ -2853,9 +4741,12 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                   </div>
                 </div>
               </div>
+              )}
 
-              {/* Row 4: Re-Entry On Target / Re-Entry On SL / Simple Momentum */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
+              {/* Row 4: Re-Entry On Target / Re-Entry On SL / Simple Momentum / Range Break Out / Add Sequential Button */}
+              <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 ${config.strategy_type === 'sequential' && !leg.isLazyLeg && !leg.isSequentialLeg ? 'mb-2' : 'mt-6'}`}>
+                {/* Re-Entry On Target - Hide for Sequential strategy in main legs, but SHOW for Sequential leg cards */}
+                {(config.strategy_type !== 'sequential' || leg.isSequentialLeg) && (
                 <div className="flex flex-col space-y-2" style={{ paddingLeft: '25px', paddingRight: '25px' }}>
                   <div className="flex items-center gap-2">
                     <label className="text-sm font-semibold text-gray-700">Re-Entry On Target</label>
@@ -2870,6 +4761,10 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                           });
                           return;
                         }
+                        // Close dropdown when toggle is turned off
+                        if (!e.target.checked) {
+                          setLazyLegDropdownOpen(prev => ({ ...prev, [`tgt-${legIndex}`]: false }));
+                        }
                         updateLegInPlace(legIndex, { reentry_tgt_enabled: e.target.checked });
                       }}
                       id={`reentryTarget-${legIndex}`}
@@ -2877,19 +4772,176 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                   </div>
                   <div className="flex gap-2">
                     <select 
-                      value={leg.reentry_tgt_mode || 're_cost'} 
-                      onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, reentry_tgt_mode: e.target.value}; setConfig({...config, legs: updated}); }} 
+                      value={(leg.reentry_tgt_mode === 'lazy_leg' || leg.reentry_tgt_mode?.startsWith('lazy_leg_')) ? 'lazy_leg' : (leg.reentry_tgt_mode || 're_cost')}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === 'lazy_leg') {
+                          // Set mode to lazy_leg and open dropdown
+                          const updated = [...config.legs];
+                          updated[legIndex] = {...leg, reentry_tgt_mode: 'lazy_leg'};
+                          setConfig({...config, legs: updated});
+                          // Open lazy leg dropdown for target
+                          setLazyLegDropdownOpen(prev => ({ ...prev, [`tgt-${legIndex}`]: true }));
+                        } else {
+                          const updated = [...config.legs];
+                          updated[legIndex] = {...leg, reentry_tgt_mode: value};
+                          setConfig({...config, legs: updated});
+                        }
+                      }} 
                       disabled={!leg.reentry_tgt_enabled} 
                       className="flex-1 min-w-0 px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50"
                     >
+                      <option value="re_cost">RE COST</option>
                       <option value="re_asap">RE ASAP</option>
                       <option value="re_asap_reverse">RE ASAP REV</option>
                       <option value="re_momentum" disabled={!leg.momentum_enabled}>RE MOMENTUM</option>
                       <option value="re_momentum_reverse" disabled={!leg.momentum_enabled}>RE MOMENTUM REV</option>
-                      <option value="re_cost">RE COST</option>
                       <option value="re_cost_reverse">RE COST REV</option>
+                      {!leg.isSequentialLeg && <option value="lazy_leg">Lazy Leg</option>}
                     </select>
-                    <input 
+                    
+                    {/* Show lazy leg name selector if lazy leg is selected */}
+                    {!leg.isSequentialLeg && (leg.reentry_tgt_mode === 'lazy_leg' || leg.reentry_tgt_mode?.startsWith('lazy_leg_')) && (
+                      <div 
+                        className="relative flex-1 min-w-0 overflow-visible" 
+                        ref={(el) => lazyLegDropdownRef.current[`tgt-${legIndex}`] = el}
+                        style={{ zIndex: lazyLegDropdownOpen[`tgt-${legIndex}`] ? 100 : 'auto' }}
+                      >
+                        {/* Custom Dropdown Button */}
+                        <button
+                          type="button"
+                          onClick={() => setLazyLegDropdownOpen(prev => ({ ...prev, [`tgt-${legIndex}`]: !prev[`tgt-${legIndex}`] }))}
+                          disabled={!leg.reentry_tgt_enabled}
+                          className="w-full px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 text-left flex items-center justify-between"
+                        >
+                          <span>
+                            {(() => {
+                              const referencedLazyLeg = config.legs.find(l => `lazy_leg_${l.id}` === leg.reentry_tgt_mode);
+                              if (referencedLazyLeg) {
+                                return referencedLazyLeg.customName || `lazy${referencedLazyLeg.lazyLegNumber}`;
+                              }
+                              return 'Select Lazy Leg';
+                            })()}
+                          </span>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        
+                        {/* Custom Dropdown Menu */}
+                        {lazyLegDropdownOpen[`tgt-${legIndex}`] && (
+                          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-64 overflow-auto">
+                            {/* Create New Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // ✅ Create New: Open modal with empty/default config
+                                setLazyLegConfig({
+                                  customName: '',  // Empty for new lazy leg
+                                  lots: '1',
+                                  expiry: config.dte_filter === '0' ? '0dte' : '1dte',
+                                  position: 'buy',
+                                  option_type: 'call',
+                                  strike_criteria: 'based on points',
+                                  atm_strike: 'atm',
+                                  atm_percent_direction: '+',
+                                  atm_percent_value: '',
+                                  closest_premium_value: '',
+                                  lower_range: '',
+                                  upper_range: '',
+                                  premium_value: '',
+                                  target_enabled: false,
+                                  target_type: 'points',
+                                  target_value: '',
+                                  stop_loss_enabled: false,
+                                  stop_loss_type: 'points',
+                                  stop_loss_value: '',
+                                  trail_sl_enabled: false,
+                                  trail_sl_type: 'points',
+                                  trail_sl_value: '',
+                                  trail_sl_lock_value: '',
+                                  reentry_tgt_enabled: false,
+                                  reentry_tgt_mode: 're_cost',
+                                  reentry_tgt_count: '',
+                                  reentry_sl_enabled: false,
+                                  reentry_sl_mode: 're_cost',
+                                  reentry_sl_count: '',
+                                  momentum_enabled: false,
+                                  momentum_type: 'points_up',
+                                  momentum_value: '',
+                                  range_breakout_enabled: false,
+                                  range_instrument: 'underlying',
+                                  range_time: '14:45',
+                                  range_direction: 'high'
+                                });
+                                
+                                setLazyLegContext({ legIndex, type: 'target' });
+                                setShowLazyLegModal(true);
+                                setLazyLegDropdownOpen(prev => ({ ...prev, [`tgt-${legIndex}`]: false }));
+                              }}
+                              className="w-full px-4 py-2 text-left text-white font-medium hover:opacity-90 transition-colors flex items-center gap-2"
+                              style={{ backgroundColor: '#4682b4' }}
+                            >
+                              <span>+</span>
+                              <span>Create New</span>
+                            </button>
+                            
+                            {/* OR Separator */}
+                            <div className="px-4 py-2 text-center text-sm text-gray-500">OR</div>
+                            
+                            {/* Select from existing - Collapsible */}
+                            <button
+                              type="button"
+                              onClick={() => setLazyLegExistingExpanded(prev => ({ ...prev, [`tgt-${legIndex}`]: !prev[`tgt-${legIndex}`] }))}
+                              className="w-full px-4 py-2 text-left text-blue-600 font-medium hover:bg-blue-50 transition-colors flex items-center justify-between"
+                            >
+                              <span>Select from existing</span>
+                              <svg 
+                                className={`w-4 h-4 transition-transform ${lazyLegExistingExpanded[`tgt-${legIndex}`] ? 'rotate-180' : ''}`}
+                                fill="none" 
+                                stroke="currentColor" 
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            
+                            {/* Existing Lazy Legs List */}
+                            {lazyLegExistingExpanded[`tgt-${legIndex}`] && (
+                              <div className="border-t border-gray-200">
+                                {config.legs.filter(l => {
+                                  // If current leg is MAIN leg, show all LAZY legs
+                                  // If current leg is LAZY leg, show all LAZY legs EXCEPT itself
+                                  if (!leg.isLazyLeg) {
+                                    return l.isLazyLeg;
+                                  } else {
+                                    return l.isLazyLeg && l.id !== leg.id;
+                                  }
+                                }).map(lazyLeg => (
+                                  <button
+                                    key={lazyLeg.id}
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = [...config.legs];
+                                      updated[legIndex] = {...leg, reentry_tgt_mode: `lazy_leg_${lazyLeg.id}`};
+                                      setConfig({...config, legs: updated});
+                                      setLazyLegDropdownOpen(prev => ({ ...prev, [`tgt-${legIndex}`]: false }));
+                                    }}
+                                    className="w-full px-6 py-2 text-left hover:bg-gray-100 transition-colors text-sm"
+                                  >
+                                    {lazyLeg.customName || `lazy${lazyLeg.lazyLegNumber}`}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Only show count input if NOT lazy leg */}
+                    {!(leg.reentry_tgt_mode === 'lazy_leg' || leg.reentry_tgt_mode?.startsWith('lazy_leg_')) && (
+                      <input 
                       type="number" 
                       min="0"
                       step="1"
@@ -2913,9 +4965,13 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                       className="flex-1 min-w-0 px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50" 
                       placeholder="1.00" 
                     />
+                    )}
                   </div>
                 </div>
+                )}
 
+                {/* Re-Entry On SL - Hide for Sequential strategy in main legs, but SHOW for Sequential leg cards */}
+                {(config.strategy_type !== 'sequential' || leg.isSequentialLeg) && (
                 <div className="flex flex-col space-y-2" style={{ paddingLeft: '25px', paddingRight: '25px' }}>
                   <div className="flex items-center gap-2">
                     <label className="text-sm font-semibold text-gray-700">Re-Entry On SL</label>
@@ -2930,6 +4986,10 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                           });
                           return;
                         }
+                        // Close dropdown when toggle is turned off
+                        if (!e.target.checked) {
+                          setLazyLegDropdownOpen(prev => ({ ...prev, [`sl-${legIndex}`]: false }));
+                        }
                         updateLegInPlace(legIndex, { reentry_sl_enabled: e.target.checked });
                       }}
                       id={`reentrySL-${legIndex}`}
@@ -2937,19 +4997,176 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                   </div>
                   <div className="flex gap-2">
                     <select 
-                      value={leg.reentry_sl_mode || 're_cost'} 
-                      onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, reentry_sl_mode: e.target.value}; setConfig({...config, legs: updated}); }} 
+                      value={(leg.reentry_sl_mode === 'lazy_leg' || leg.reentry_sl_mode?.startsWith('lazy_leg_')) ? 'lazy_leg' : (leg.reentry_sl_mode || 're_cost')}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === 'lazy_leg') {
+                          // Don't open modal immediately - just set the mode to trigger the dropdown
+                          const updated = [...config.legs];
+                          updated[legIndex] = {...leg, reentry_sl_mode: 'lazy_leg'};
+                          setConfig({...config, legs: updated});
+                          // Open the lazy leg selector dropdown
+                          setLazyLegDropdownOpen(prev => ({ ...prev, [`sl-${legIndex}`]: true }));
+                        } else {
+                          const updated = [...config.legs];
+                          updated[legIndex] = {...leg, reentry_sl_mode: value};
+                          setConfig({...config, legs: updated});
+                        }
+                      }} 
                       disabled={!leg.reentry_sl_enabled} 
                       className="flex-1 min-w-0 px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50"
                     >
+                      <option value="re_cost">RE COST</option>
                       <option value="re_asap">RE ASAP</option>
                       <option value="re_asap_reverse">RE ASAP REV</option>
                       <option value="re_momentum" disabled={!leg.momentum_enabled}>RE MOMENTUM</option>
                       <option value="re_momentum_reverse" disabled={!leg.momentum_enabled}>RE MOMENTUM REV</option>
-                      <option value="re_cost">RE COST</option>
                       <option value="re_cost_reverse">RE COST REV</option>
+                      {!leg.isSequentialLeg && <option value="lazy_leg">Lazy Leg</option>}
                     </select>
-                    <input 
+                    
+                    {/* Show lazy leg name selector if lazy leg is selected */}
+                    {!leg.isSequentialLeg && (leg.reentry_sl_mode === 'lazy_leg' || leg.reentry_sl_mode?.startsWith('lazy_leg_')) && (
+                      <div 
+                        className="relative flex-1 min-w-0 overflow-visible" 
+                        ref={(el) => lazyLegDropdownRef.current[`sl-${legIndex}`] = el}
+                        style={{ zIndex: lazyLegDropdownOpen[`sl-${legIndex}`] ? 100 : 'auto' }}
+                      >
+                        {/* Custom Dropdown Button */}
+                        <button
+                          type="button"
+                          onClick={() => setLazyLegDropdownOpen(prev => ({ ...prev, [`sl-${legIndex}`]: !prev[`sl-${legIndex}`] }))}
+                          disabled={!leg.reentry_sl_enabled}
+                          className="w-full px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 text-left flex items-center justify-between"
+                        >
+                          <span>
+                            {(() => {
+                              const referencedLazyLeg = config.legs.find(l => `lazy_leg_${l.id}` === leg.reentry_sl_mode);
+                              if (referencedLazyLeg) {
+                                return referencedLazyLeg.customName || `lazy${referencedLazyLeg.lazyLegNumber}`;
+                              }
+                              return 'Select Lazy Leg';
+                            })()}
+                          </span>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        
+                        {/* Custom Dropdown Menu */}
+                        {lazyLegDropdownOpen[`sl-${legIndex}`] && (
+                          <div className="absolute z-[60] w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-64 overflow-auto">
+                            {/* Create New Button */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // ✅ Create New: Open modal with empty/default config
+                                setLazyLegConfig({
+                                  customName: '',  // Empty for new lazy leg
+                                  lots: '1',
+                                  expiry: config.dte_filter === '0' ? '0dte' : '1dte',
+                                  position: 'buy',
+                                  option_type: 'call',
+                                  strike_criteria: 'based on points',
+                                  atm_strike: 'atm',
+                                  atm_percent_direction: '+',
+                                  atm_percent_value: '',
+                                  closest_premium_value: '',
+                                  lower_range: '',
+                                  upper_range: '',
+                                  premium_value: '',
+                                  target_enabled: false,
+                                  target_type: 'points',
+                                  target_value: '',
+                                  stop_loss_enabled: false,
+                                  stop_loss_type: 'points',
+                                  stop_loss_value: '',
+                                  trail_sl_enabled: false,
+                                  trail_sl_type: 'points',
+                                  trail_sl_value: '',
+                                  trail_sl_lock_value: '',
+                                  reentry_tgt_enabled: false,
+                                  reentry_tgt_mode: 're_cost',
+                                  reentry_tgt_count: '',
+                                  reentry_sl_enabled: false,
+                                  reentry_sl_mode: 're_cost',
+                                  reentry_sl_count: '',
+                                  momentum_enabled: false,
+                                  momentum_type: 'points_up',
+                                  momentum_value: '',
+                                  range_breakout_enabled: false,
+                                  range_instrument: 'underlying',
+                                  range_time: '14:45',
+                                  range_direction: 'high'
+                                });
+                                
+                                setLazyLegContext({ legIndex, type: 'sl' });
+                                setShowLazyLegModal(true);
+                                setLazyLegDropdownOpen(prev => ({ ...prev, [`sl-${legIndex}`]: false }));
+                              }}
+                              className="w-full px-4 py-2 text-left text-white font-medium hover:opacity-90 transition-colors flex items-center gap-2"
+                              style={{ backgroundColor: '#4682b4' }}
+                            >
+                              <span>+</span>
+                              <span>Create New</span>
+                            </button>
+                            
+                            {/* OR Separator */}
+                            <div className="px-4 py-2 text-center text-sm text-gray-500">OR</div>
+                            
+                            {/* Select from existing - Collapsible */}
+                            <button
+                              type="button"
+                              onClick={() => setLazyLegExistingExpanded(prev => ({ ...prev, [`sl-${legIndex}`]: !prev[`sl-${legIndex}`] }))}
+                              className="w-full px-4 py-2 text-left text-blue-600 font-medium hover:bg-blue-50 transition-colors flex items-center justify-between"
+                            >
+                              <span>Select from existing</span>
+                              <svg 
+                                className={`w-4 h-4 transition-transform ${lazyLegExistingExpanded[`sl-${legIndex}`] ? 'rotate-180' : ''}`}
+                                fill="none" 
+                                stroke="currentColor" 
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                            
+                            {/* Existing Lazy Legs List */}
+                            {lazyLegExistingExpanded[`sl-${legIndex}`] && (
+                              <div className="border-t border-gray-200">
+                                {config.legs.filter(l => {
+                                  // If current leg is MAIN leg, show all LAZY legs
+                                  // If current leg is LAZY leg, show all LAZY legs EXCEPT itself
+                                  if (!leg.isLazyLeg) {
+                                    return l.isLazyLeg;
+                                  } else {
+                                    return l.isLazyLeg && l.id !== leg.id;
+                                  }
+                                }).map(lazyLeg => (
+                                  <button
+                                    key={lazyLeg.id}
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = [...config.legs];
+                                      updated[legIndex] = {...leg, reentry_sl_mode: `lazy_leg_${lazyLeg.id}`};
+                                      setConfig({...config, legs: updated});
+                                      setLazyLegDropdownOpen(prev => ({ ...prev, [`sl-${legIndex}`]: false }));
+                                    }}
+                                    className="w-full px-6 py-2 text-left hover:bg-gray-100 transition-colors text-sm"
+                                  >
+                                    {lazyLeg.customName || `lazy${lazyLeg.lazyLegNumber}`}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Only show count input if NOT lazy leg */}
+                    {!(leg.reentry_sl_mode === 'lazy_leg' || leg.reentry_sl_mode?.startsWith('lazy_leg_')) && (
+                      <input 
                       type="number" 
                       min="0"
                       step="1"
@@ -2972,9 +5189,12 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                       className="flex-1 min-w-0 px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50" 
                       placeholder="1.00" 
                     />
+                    )}
                   </div>
                 </div>
+                )}
 
+                {/* Simple Momentum - Always visible */}
                 <div className="flex flex-col space-y-2 relative" style={{ paddingLeft: '25px', paddingRight: '25px' }}>
                   <div className="flex items-center gap-2">
                     <label className="text-sm font-semibold text-gray-700">Simple Momentum</label>
@@ -3031,7 +5251,7 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                       {legValidationErrors[`momentum-${legIndex}`]}
                     </div>
                   )}
-                  <div className="flex gap-2">
+                  <div className="flex gap-2" style={leg.isLazyLeg ? { paddingBottom: '20px' } : {}}>
                     <select value={leg.momentum_mode || 'percentage_down'} onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, momentum_mode: e.target.value}; setConfig({...config, legs: updated}); }} disabled={!leg.momentum_enabled} className="flex-1 min-w-0 px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50">
                       <option value="points">Points ↑</option>
                       <option value="points_down">Points ↓</option>
@@ -3063,67 +5283,157 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
                     />
                   </div>
                 </div>
-              </div>
 
-              {/* Row 5: Range Break Out - Single Line */}
-              <div className="flex flex-col relative" style={{ paddingLeft: '25px', paddingRight: '25px' }}>
-                <div className="flex items-center gap-3 pb-4 border-b border-gray-200 mt-6">
-                  <label className="text-sm font-semibold text-gray-700 min-w-fit">Range Break Out</label>
-                  <Info size={14} className="text-gray-400" />
-                  <ToggleSwitch 
-                    checked={leg.range_enabled || false} 
-                    onChange={(e) => { 
-                      // Check if Simple Momentum is already enabled
-                      if (e.target.checked && leg.momentum_enabled) {
-                        // Prevent enabling and show error message
-                        setLegValidationErrors(prev => ({
-                          ...prev,
-                          [`range-${legIndex}`]: 'Please disable Simple Momentum first.'
-                        }));
-                        // Auto-hide after 3 seconds
-                        setTimeout(() => {
+                {/* Range Break Out - Show for Sequential leg cards only */}
+                {(config.strategy_type === 'sequential' && !leg.isLazyLeg) && (
+                  <div className="flex flex-col space-y-2 relative" style={{ paddingLeft: '25px', paddingRight: '25px', paddingBottom: '10px' }}>
+                    <div className="flex items-center gap-2">
+                      <label className="text-sm font-semibold text-gray-700">Range Break Out</label>
+                      <Info size={14} className="text-gray-400" />
+                      <ToggleSwitch 
+                        checked={leg.range_enabled || false} 
+                        onChange={(e) => { 
+                          // Check if Simple Momentum is already enabled
+                          if (e.target.checked && leg.momentum_enabled) {
+                            // Prevent enabling and show error message
+                            setLegValidationErrors(prev => ({
+                              ...prev,
+                              [`range-${legIndex}`]: 'Please disable Simple Momentum first.'
+                            }));
+                            // Auto-hide after 3 seconds
+                            setTimeout(() => {
+                              setLegValidationErrors(prev => {
+                                const updated = {...prev};
+                                delete updated[`range-${legIndex}`];
+                                return updated;
+                              });
+                            }, 3000);
+                            return;
+                          }
+                          // Clear error message if any
                           setLegValidationErrors(prev => {
                             const updated = {...prev};
                             delete updated[`range-${legIndex}`];
                             return updated;
                           });
-                        }, 3000);
-                        return;
-                      }
-                      // Clear error message if any
-                      setLegValidationErrors(prev => {
-                        const updated = {...prev};
-                        delete updated[`range-${legIndex}`];
-                        return updated;
-                      });
-                      // Enable/disable Range Break Out
-                      const updated = [...config.legs]; 
-                      updated[legIndex] = {...leg, range_enabled: e.target.checked}; 
-                      setConfig({...config, legs: updated}); 
-                    }}
-                    id={`rangeBreakout-${legIndex}`}
-                  />
-                  
-                  <select value={leg.range_instrument || 'underlying'} onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, range_instrument: e.target.value}; setConfig({...config, legs: updated}); }} disabled={!leg.range_enabled} className="px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 min-w-[140px]">
-                    <option value="instrument">Instrument</option>
-                    <option value="underlying">Underlying</option>
-                  </select>
-                  
-                  <input type="text" value={leg.range_time || '14:45'} onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, range_time: e.target.value}; setConfig({...config, legs: updated}); }} disabled={!leg.range_enabled} placeholder="14:45" className="px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 w-32" />
-                  
-                  <div className="flex gap-2">
-                    <button onClick={() => { if(leg.range_enabled) { const updated = [...config.legs]; updated[legIndex] = {...leg, range_direction: 'high'}; setConfig({...config, legs: updated}); }}} disabled={!leg.range_enabled} className={`px-5 py-2.5 rounded-lg text-base font-semibold transition-all disabled:opacity-50 ${leg.range_direction === 'high' && leg.range_enabled ? 'text-white shadow-md border border-blue-600' : 'bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200'}`} style={leg.range_direction === 'high' && leg.range_enabled ? { backgroundColor: '#4682b4' } : {}}>High</button>
-                    <button onClick={() => { if(leg.range_enabled) { const updated = [...config.legs]; updated[legIndex] = {...leg, range_direction: 'low'}; setConfig({...config, legs: updated}); }}} disabled={!leg.range_enabled} className={`px-5 py-2.5 rounded-lg text-base font-semibold transition-all disabled:opacity-50 ${leg.range_direction === 'low' && leg.range_enabled ? 'text-white shadow-md border border-blue-600' : 'bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200'}`} style={leg.range_direction === 'low' && leg.range_enabled ? { backgroundColor: '#4682b4' } : {}}>Low</button>
-                  </div>
-                </div>
-                {legValidationErrors[`range-${legIndex}`] && (
-                  <div className="absolute left-6 top-16 bg-red-50 border border-red-300 text-red-600 text-xs px-3 py-2 rounded shadow-lg z-10 animate-fade-in">
-                    {legValidationErrors[`range-${legIndex}`]}
+                          // Enable/disable Range Break Out
+                          const updated = [...config.legs]; 
+                          updated[legIndex] = {...leg, range_enabled: e.target.checked}; 
+                          setConfig({...config, legs: updated}); 
+                        }}
+                        id={`rangeBreakout-${legIndex}`}
+                      />
+                    </div>
+                    {legValidationErrors[`range-${legIndex}`] && (
+                      <div className="absolute left-6 top-8 bg-red-50 border border-red-300 text-red-600 text-xs px-3 py-2 rounded shadow-lg z-10 animate-fade-in">
+                        {legValidationErrors[`range-${legIndex}`]}
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <select value={leg.range_instrument || 'underlying'} onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, range_instrument: e.target.value}; setConfig({...config, legs: updated}); }} disabled={!leg.range_enabled} className="px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 min-w-[140px]">
+                        <option value="instrument">Instrument</option>
+                        <option value="underlying">Underlying</option>
+                      </select>
+                      
+                      <input type="text" value={leg.range_time || '14:45'} onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, range_time: e.target.value}; setConfig({...config, legs: updated}); }} disabled={!leg.range_enabled} placeholder="14:45" className="px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 w-32" />
+                      
+                      <div className="flex gap-2">
+                        <button onClick={() => { if(leg.range_enabled) { const updated = [...config.legs]; updated[legIndex] = {...leg, range_direction: 'high'}; setConfig({...config, legs: updated}); }}} disabled={!leg.range_enabled} className={`px-5 py-2.5 rounded-lg text-base font-semibold transition-all disabled:opacity-50 ${leg.range_direction === 'high' && leg.range_enabled ? 'text-white shadow-md border border-blue-600' : 'bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200'}`} style={leg.range_direction === 'high' && leg.range_enabled ? { backgroundColor: '#4682b4' } : {}}>High</button>
+                        <button onClick={() => { if(leg.range_enabled) { const updated = [...config.legs]; updated[legIndex] = {...leg, range_direction: 'low'}; setConfig({...config, legs: updated}); }}} disabled={!leg.range_enabled} className={`px-5 py-2.5 rounded-lg text-base font-semibold transition-all disabled:opacity-50 ${leg.range_direction === 'low' && leg.range_enabled ? 'text-white shadow-md border border-blue-600' : 'bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200'}`} style={leg.range_direction === 'low' && leg.range_enabled ? { backgroundColor: '#4682b4' } : {}}>Low</button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
+
+              {/* Row 5: Range Break Out - Single Line (Only show for non-lazy and non-sequential legs) */}
+              {!leg.isLazyLeg && config.strategy_type !== 'sequential' && (
+                <div className="flex flex-col relative" style={{ paddingLeft: '25px', paddingRight: '25px' }}>
+                  <div className="flex items-center gap-3 pb-4 border-b border-gray-200 mt-6">
+                    <label className="text-sm font-semibold text-gray-700 min-w-fit">Range Break Out</label>
+                    <Info size={14} className="text-gray-400" />
+                    <ToggleSwitch 
+                      checked={leg.range_enabled || false} 
+                      onChange={(e) => { 
+                        // Check if Simple Momentum is already enabled
+                        if (e.target.checked && leg.momentum_enabled) {
+                          // Prevent enabling and show error message
+                          setLegValidationErrors(prev => ({
+                            ...prev,
+                            [`range-${legIndex}`]: 'Please disable Simple Momentum first.'
+                          }));
+                          // Auto-hide after 3 seconds
+                          setTimeout(() => {
+                            setLegValidationErrors(prev => {
+                              const updated = {...prev};
+                              delete updated[`range-${legIndex}`];
+                              return updated;
+                            });
+                          }, 3000);
+                          return;
+                        }
+                        // Clear error message if any
+                        setLegValidationErrors(prev => {
+                          const updated = {...prev};
+                          delete updated[`range-${legIndex}`];
+                          return updated;
+                        });
+                        // Enable/disable Range Break Out
+                        const updated = [...config.legs]; 
+                        updated[legIndex] = {...leg, range_enabled: e.target.checked}; 
+                        setConfig({...config, legs: updated}); 
+                      }}
+                      id={`rangeBreakout-${legIndex}`}
+                    />
+                    
+                    <select value={leg.range_instrument || 'underlying'} onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, range_instrument: e.target.value}; setConfig({...config, legs: updated}); }} disabled={!leg.range_enabled} className="px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 min-w-[140px]">
+                      <option value="instrument">Instrument</option>
+                      <option value="underlying">Underlying</option>
+                    </select>
+                    
+                    <input type="text" value={leg.range_time || '14:45'} onChange={(e) => { const updated = [...config.legs]; updated[legIndex] = {...leg, range_time: e.target.value}; setConfig({...config, legs: updated}); }} disabled={!leg.range_enabled} placeholder="14:45" className="px-4 py-2.5 text-base border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all disabled:opacity-50 w-32" />
+                    
+                    <div className="flex gap-2">
+                      <button onClick={() => { if(leg.range_enabled) { const updated = [...config.legs]; updated[legIndex] = {...leg, range_direction: 'high'}; setConfig({...config, legs: updated}); }}} disabled={!leg.range_enabled} className={`px-5 py-2.5 rounded-lg text-base font-semibold transition-all disabled:opacity-50 ${leg.range_direction === 'high' && leg.range_enabled ? 'text-white shadow-md border border-blue-600' : 'bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200'}`} style={leg.range_direction === 'high' && leg.range_enabled ? { backgroundColor: '#4682b4' } : {}}>High</button>
+                      <button onClick={() => { if(leg.range_enabled) { const updated = [...config.legs]; updated[legIndex] = {...leg, range_direction: 'low'}; setConfig({...config, legs: updated}); }}} disabled={!leg.range_enabled} className={`px-5 py-2.5 rounded-lg text-base font-semibold transition-all disabled:opacity-50 ${leg.range_direction === 'low' && leg.range_enabled ? 'text-white shadow-md border border-blue-600' : 'bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200'}`} style={leg.range_direction === 'low' && leg.range_enabled ? { backgroundColor: '#4682b4' } : {}}>Low</button>
+                    </div>
+                  </div>
+                  {legValidationErrors[`range-${legIndex}`] && (
+                    <div className="absolute left-6 top-16 bg-red-50 border border-red-300 text-red-600 text-xs px-3 py-2 rounded shadow-lg z-10 animate-fade-in">
+                      {legValidationErrors[`range-${legIndex}`]}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Add Sequential Leg Button - Inline with Momentum and Range Break Out (Only for Sequential mode) */}
+              {config.strategy_type === 'sequential' && !leg.isLazyLeg && !leg.isSequentialLeg && (
+                <div className="flex flex-col justify-end" style={{ paddingLeft: '25px', paddingRight: '25px', paddingBottom: '10px' }}>
+                  <button 
+                    onClick={() => {
+                      // Check if this main leg already has a sequential leg
+                      const existingSeqLeg = config.legs.find(l => l.isSequentialLeg && l.parentLegIndex === legIndex);
+                      if (existingSeqLeg) {
+                        // Show warning
+                        setResponsePopup({ 
+                          type: 'error', 
+                          title: `SEQ#${legIndex + 1} already created` 
+                        });
+                        return;
+                      }
+                      setSequentialLegParentIndex(legIndex);
+                      setShowSequentialLegModal(true);
+                    }} 
+                    className="px-5 py-2.5 text-white rounded-lg text-base font-semibold hover:shadow-lg active:scale-95 transition-transform duration-75 self-end"
+                    style={{ backgroundColor: '#4682b4' }}
+                  >
+                    Add Sequential Leg
+                  </button>
+                </div>
+              )}
             </div>
-          ))}
+          );
+        })}
         </div>
       )}
 
@@ -3486,12 +5796,12 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
             
             <button 
               onClick={handleSubmit}
-              disabled={isLoading || (strategyId && strategyId !== -999 && strategyId !== '-999' && userMadeChanges)}
+              disabled={isLoading}
               className="flex items-center justify-center gap-2 w-44 p-4 text-white rounded-lg hover:shadow-lg active:scale-95 transition-all duration-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ backgroundColor: '#005A9C' }}
-              onMouseEnter={(e) => !isLoading && !(strategyId && strategyId !== -999 && strategyId !== '-999' && userMadeChanges) && (e.currentTarget.style.backgroundColor = '#004580')}
-              onMouseLeave={(e) => !isLoading && !(strategyId && strategyId !== -999 && strategyId !== '-999' && userMadeChanges) && (e.currentTarget.style.backgroundColor = '#005A9C')}
-              title={strategyId && strategyId !== -999 && strategyId !== '-999' && userMadeChanges ? 'Please save the changes first before running backtest' : ''}
+              onMouseEnter={(e) => !isLoading && (e.currentTarget.style.backgroundColor = '#004580')}
+              onMouseLeave={(e) => !isLoading && (e.currentTarget.style.backgroundColor = '#005A9C')}
+              title=""
             >
               <Play size={16} />
               Start Backtest
@@ -3805,8 +6115,8 @@ import { useStrategy } from '../context/StrategyContext';  // ⭐ NEW: Import Co
         strategyId={strategyId}
         onLoadVersion={onLoadVersion}
       />
+
     </div>
   );
 };
-
 export default StrategyBuilder;
