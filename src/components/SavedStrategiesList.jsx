@@ -17,6 +17,8 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
   const fetchStrategies = async () => {
     console.log('[SavedStrategiesList] Loading strategies from localStorage...');
     setLoading(true);
+    // ⭐ Close any open dropdowns when fetching
+    setOpenDropdown(null);
     try {
       // ⭐ Load from localStorage instead of backend API
       const savedCards = JSON.parse(localStorage.getItem('saved_strategies_cards') || '[]');
@@ -32,6 +34,7 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
       });
       
       setStrategies(savedCards);
+      console.log('[SavedStrategiesList] openDropdown state:', openDropdown);
     } catch (error) {
       console.error('[SavedStrategiesList] Error loading strategies from localStorage:', error);
       setStrategies([]);
@@ -47,6 +50,8 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
 
   useEffect(() => {
     fetchStrategies();
+    // ⭐ Close any open dropdowns when list refreshes
+    setOpenDropdown(null);
   }, [refreshKey]); // ⭐ Re-fetch when refreshKey changes (after save)
 
   // Close dropdown when clicking outside
@@ -64,6 +69,11 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
   }, []);
 
   const toggleDropdown = (strategyId) => {
+    // ⭐ FIX: Don't toggle if strategyId is null or undefined
+    if (strategyId === null || strategyId === undefined) {
+      console.warn('[SavedStrategiesList] Cannot toggle dropdown for strategy with null/undefined ID');
+      return;
+    }
     setOpenDropdown(openDropdown === strategyId ? null : strategyId);
   };
 
@@ -291,7 +301,7 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
                     </button>
                     
                     {/* Dropdown Menu */}
-                    {openDropdown === strategy.id && (
+                    {openDropdown === strategy.id && strategy.id !== null && strategy.id !== undefined && (
                       <div className="absolute top-full left-0 mt-1 w-40 bg-white rounded shadow-lg border border-gray-200 z-50 overflow-hidden">
                         <button
                           onClick={() => handleActivate(strategy, 'paper')}

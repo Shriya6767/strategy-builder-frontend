@@ -153,7 +153,7 @@ const TWSStylePositionsTable = ({ positions, darkMode = false }) => {
             {sortedPositions.map((position, index) => {
               const marketValue = (position.current_price || 0) * (position.quantity || 0) * (position.multiplier || 100);
               const costBasis = (position.entry_price || 0) * (position.quantity || 0) * (position.multiplier || 100);
-              const optionDesc = `${position.option_type || 'OPT'} ${formatNumber(position.strike || 0, 0)} ${position.expiry || ''}`;
+              const optionDesc = `${(position.option_type || 'OPT').toLowerCase()} ${formatNumber(position.strike || 0, 0)} ${position.expiry || ''}`;
               
               return (
                 <tr 

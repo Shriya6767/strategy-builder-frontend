@@ -32,4 +32,27 @@ api.interceptors.response.use(
   }
 );
 
+// Portfolio API functions
+export const deletePortfolioAPI = async (portfolioId) => {
+  try {
+    const response = await fetch(`${API_URL}/delete-portfolio`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ portfolio_id: portfolioId })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || error.message || 'Failed to delete portfolio');
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('❌ Error deleting portfolio:', error);
+    throw error;
+  }
+};
+
 export default api;
