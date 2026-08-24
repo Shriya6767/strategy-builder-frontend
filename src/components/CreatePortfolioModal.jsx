@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Search } from 'lucide-react';
 import { API_URL } from '../services/api';
 import { usePortfolio } from '../context/PortfolioContext';
+import logger from '../utils/logger';
 
 const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
   const { addPortfolio } = usePortfolio();
@@ -12,7 +13,6 @@ const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
   const [strategies, setStrategies] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Fetch strategies from backend when modal opens
   useEffect(() => {
     if (isOpen) {
       fetchStrategies();
@@ -22,19 +22,16 @@ const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
   const fetchStrategies = async () => {
     setLoading(true); 
     try {
-      // ✅ Load strategies from localStorage with correct key
       const savedStrategies = localStorage.getItem('saved_strategies_cards');
       
       if (savedStrategies) {
         const strategies = JSON.parse(savedStrategies);
-        console.log('✅ Loaded strategies from localStorage (saved_strategies_cards):', strategies);
         setStrategies(Array.isArray(strategies) ? strategies : []);
       } else {
-        console.log('ℹ️ No strategies found in localStorage (saved_strategies_cards)');
         setStrategies([]);
       }
     } catch (error) {
-      console.error('❌ Error loading strategies from localStorage:', error);
+      logger.error('❌ Error loading strategies from localStorage:', error);
       setStrategies([]);
     } finally {
       setLoading(false);
@@ -74,7 +71,6 @@ const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
     try {
       setLoading(true);
       
-      // Prepare the payload in the format the API expects
       const payload = {
         portfolio_name: portfolioName.trim(),
         strategies: selectedStrategies.map(strategyId => {
@@ -87,7 +83,11 @@ const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
         })
       };
 
-      console.log('📤 Creating portfolio with payload:', payload);
+      logger.request('[SAVE PORTFOLIO] Request', {
+        method: 'POST',
+        url: `${API_URL}/save-portfolio`,
+        body: payload
+      });
 
       const response = await fetch(`${API_URL}/save-portfolio`, {
         method: 'POST',
@@ -97,34 +97,34 @@ const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
         body: JSON.stringify(payload)
       });
 
-      console.log('📡 API Response Status:', response.status, response.statusText);
-
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        logger.error('❌ Error parsing response JSON:', jsonError);
+        throw new Error('Invalid response from server');
+      }
       
-      console.log('📥 API Response Data:', data);
-      console.log('📥 data.status:', data.status);
-      console.log('📥 data.portfolio_id:', data.portfolio_id);
-      console.log('📥 response.ok:', response.ok);
+      logger.response('[SAVE PORTFOLIO] Response', {
+        status: response.status,
+        data: data
+      });
 
-      // ✅ Fix: Check for portfolio_id instead of status field
       if (response.ok && data.portfolio_id) {
-        console.log('✅ API Response Success:', data);
         
-        // Create portfolio object with proper structure - save COMPLETE strategy data
         const newPortfolio = {
           portfolio_id: data.portfolio_id,
           portfolio_name: portfolioName.trim(),
           strategies: selectedStrategies.map(strategyId => {
             const strategy = strategies.find(s => s.id === strategyId);
-            // Save complete strategy configuration
             return {
               id: strategy?.id || strategyId,
               strategy_id: strategyId,
+              name: strategy?.name || '',
               strategy_name: strategy?.name || '',
               version: strategy?.version || 1,
               symbol: strategy?.symbol || 'SPXW',
               strategy_type: strategy?.strategy_type || 'intraday',
-              // Include all configuration fields
               qty: strategy?.qty || 1,
               quantity_multiplier: strategy?.quantity_multiplier || 1,
               weekdays: strategy?.weekdays || {},
@@ -138,21 +138,17 @@ const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
           createdAt: new Date().toISOString()
         };
 
-        // ✅ Save to React Context (which auto-saves to localStorage)
         addPortfolio(newPortfolio);
 
-        console.log('✅ Portfolio saved to Context & localStorage:', newPortfolio);
-
-        // Pass the created portfolio data to parent component with complete strategy info
         const portfolioDataForParent = {
           id: data.portfolio_id,
-          name: portfolioName,
+          name: portfolioName.trim(),
           strategies: selectedStrategies.map(strategyId => {
             const strategy = strategies.find(s => s.id === strategyId);
-            // Return complete strategy object
             return {
               id: strategy?.id || strategyId,
               strategy_id: strategyId,
+              name: strategy?.name || '',
               strategy_name: strategy?.name || '',
               version: strategy?.version || 1,
               symbol: strategy?.symbol || 'SPXW',
@@ -169,21 +165,20 @@ const CreatePortfolioModal = ({ isOpen, onClose, onCreatePortfolio }) => {
           }),
         };
         
-        console.log('✅ Calling onCreatePortfolio with:', portfolioDataForParent);
-        
-        // First close the modal
         handleClose();
         
-        // Then trigger navigation (after a small delay to ensure modal is closed)
         setTimeout(() => {
           onCreatePortfolio(portfolioDataForParent);
         }, 100);
       } else {
-        alert(data.message || 'Failed to create portfolio');
+        const errorMessage = data.detail || data.message || `Server returned status ${response.status}`;
+        logger.error('❌ Portfolio creation failed:', errorMessage);
+        alert(`Failed to create portfolio: ${errorMessage}`);
       }
     } catch (error) {
-      console.error('Error creating portfolio:', error);
-      alert('Error creating portfolio. Please try again.');
+      logger.error('❌ Error creating portfolio:', error);
+      const errorMessage = error.message || 'Unknown error occurred';
+      alert(`Error creating portfolio: ${errorMessage}`);
     } finally {
       setLoading(false);
     }

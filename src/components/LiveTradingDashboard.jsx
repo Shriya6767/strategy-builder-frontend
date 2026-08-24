@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Square, Activity, DollarSign, TrendingUp, TrendingDown, AlertCircle, RefreshCw, Monitor } from 'lucide-react';
+import logger from '../utils/logger';
 
 const LiveTradingDashboard = ({ strategyConfig, onShowMonitor }) => {
   const [status, setStatus] = useState({
@@ -16,7 +17,6 @@ const LiveTradingDashboard = ({ strategyConfig, onShowMonitor }) => {
   useEffect(() => {
     fetchStatus();
     
-    // Auto-refresh every 5 seconds if enabled
     const interval = setInterval(() => {
       if (autoRefresh) {
         fetchStatus();
@@ -35,7 +35,7 @@ const LiveTradingDashboard = ({ strategyConfig, onShowMonitor }) => {
         setStatus(data.data);
       }
     } catch (error) {
-      console.error('Failed to fetch status:', error);
+      logger.error('Failed to fetch status:', error);
     }
   };
 
@@ -45,7 +45,6 @@ const LiveTradingDashboard = ({ strategyConfig, onShowMonitor }) => {
       return;
     }
 
-    // Check if strategy is configured
     if (!strategyConfig || Object.keys(strategyConfig).length === 0) {
       alert('Please configure your strategy first in the Strategy Builder tab.\n\nNote: Date selection is only for backtesting - it will be ignored for live trading.');
       return;
@@ -54,7 +53,6 @@ const LiveTradingDashboard = ({ strategyConfig, onShowMonitor }) => {
     setIsStarting(true);
 
     try {
-      // Step 1: Connect to broker
       const connectResponse = await fetch('/api/live/start', {
         method: 'POST'
       });
@@ -67,7 +65,6 @@ const LiveTradingDashboard = ({ strategyConfig, onShowMonitor }) => {
         return;
       }
 
-      // Step 2: Start auto-trading with strategy
       const autoTradeResponse = await fetch('/api/live/start-auto-trading', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -97,14 +94,12 @@ const LiveTradingDashboard = ({ strategyConfig, onShowMonitor }) => {
     setIsStopping(true);
 
     try {
-      // Step 1: Stop auto-trading
       const stopAutoResponse = await fetch('/api/live/stop-auto-trading', {
         method: 'POST'
       });
 
       const stopAutoData = await stopAutoResponse.json();
       
-      // Step 2: Disconnect from broker
       const stopResponse = await fetch('/api/live/stop', {
         method: 'POST'
       });

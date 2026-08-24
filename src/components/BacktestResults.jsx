@@ -1,9 +1,11 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, useEffect, useRef } from 'react';
+import React from 'react';
 import { Download } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ComposedChart, Legend, Line } from 'recharts';
 import MonthlyStatsTable from './MonthlyStatsTable';
 import ToggleSwitch from './ToggleSwitch';
 import { API_URL } from '../services/api';
+import logger from '../utils/logger';
 
 const inr = (value, decimals = 2) =>
   `₹ ${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
@@ -14,7 +16,6 @@ const inrCompact = (value) => {
   return `${sign}₹${Math.abs(v).toLocaleString('en-IN')}`;
 };
 
-// Helper component to color-code numeric values: green for positive, red for negative
 const ColoredValue = ({ value, prefix = '₹ ', suffix = '', decimals = 2, className = '' }) => {
   const numValue = Number(value || 0);
   const isPositive = numValue >= 0;
@@ -32,14 +33,11 @@ const ColoredValue = ({ value, prefix = '₹ ', suffix = '', decimals = 2, class
 };
 
 const PAGE_LEG_TARGET = 10; // target LEG rows per page. Whole day-groups are packed in without
-// splitting a day's legs across pages — so a 1-leg/day strategy gets ~10 days per page
-// (matching the old "1-20 of N items" behaviour), while a 10-leg/day strategy gets exactly
-// one day (10 legs) per page, and the next page shows the next day's 10 legs.
 
 const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInSession, onClearResults }) => {
   const [statsView, setStatsView] = useState('day'); // 'day' | 'trade'
   const [inOutSample, setInOutSample] = useState(false);
-  const [slippage, setSlippage] = useState(1);
+  const [slippage, setSlippage] = useState(0); // Default to 0 instead of 1
   const [slippageCalculated, setSlippageCalculated] = useState(false);
   const [slippageResults, setSlippageResults] = useState(null); // Store slippage-adjusted results
   const [refreshKey, setRefreshKey] = useState(0); // Force re-render key
@@ -49,6 +47,23 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
   const [expandedLegs, setExpandedLegs] = useState(() => new Set());
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const [showErrorMessage, setShowErrorMessage] = useState(false);
+
+  // Ref for auto-scrolling to results when backtest completes
+  const resultsRef = useRef(null);
+
+  // Auto-scroll to results when they become available
+  useEffect(() => {
+    if (results && resultsRef.current) {
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'start',
+          inline: 'nearest'
+        });
+      }, 100);
+    }
+  }, [results]); // Only trigger when results change
 
   const toggleLegExpanded = (key) => {
     setExpandedLegs((prev) => {
@@ -62,33 +77,20 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
     return <div className="text-center text-gray-500">No results to display</div>;
   }
 
-  // Use slippage-adjusted results if available, otherwise use original results
   const activeResults = slippageResults ? { data: slippageResults } : results;
 
-  // ? DEBUG: Log which results are being used
-  console.log('[BacktestResults] Using results:', {
-    hasSlippageResults: !!slippageResults,
-    slippageCalculated: slippageCalculated,
-    activeResultsKeys: activeResults?.data ? Object.keys(activeResults.data) : 'no data',
-    tradeResultsCount: activeResults?.data?.trade_results?.length || 0
-  });
 
-  // ── Parse backend response ────────────────────────────────────────────────
-  // Backend sends: { success, data: { trade_results: [...], summaryreportResult: [...] } }
   let allTrades = [];
   let cumulativeData = [];
   let drawdownData = [];
   let overallExits = [];
 
-  // Extract and transform monthly stats from API response
   const monthlyStatsArray = activeResults?.data?.monthly_state_result || activeResults?.data?.monthlyStateResult || [];
   const monthlyStats = {};
   monthlyStatsArray.forEach(yearData => {
     const year = yearData.year;
-    // Extract days number from string like "10 [2022-06-07 to 2022-06-17]"
     const daysMatch = yearData.days_of_Max_Drawdown?.match(/^(\d+)/);
     const daysNum = daysMatch ? daysMatch[1] : null;
-    // Extract date range
     const dateMatch = yearData.days_of_Max_Drawdown?.match(/\[(.*?) to (.*?)\]/);
     const mddStart = dateMatch ? dateMatch[1] : null;
     const mddEnd = dateMatch ? dateMatch[2] : null;
@@ -115,30 +117,17 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
     };
   });
 
-  // Extract trade_results array — flatten all legs into allTrades
   const tradeResults = activeResults?.data?.trade_results
     || activeResults?.data?.tradeResults
     || activeResults?.data?.trades
     || activeResults?.data?.data
     || (Array.isArray(activeResults?.data) ? activeResults.data : []);
   
-  console.log('[BacktestResults] results keys:', Object.keys(results || {}));
-  console.log('[BacktestResults] results.data keys:', results?.data ? Object.keys(results.data) : 'no data');
-  console.log('[BacktestResults] tradeResults length:', tradeResults.length);
   
-  // ? DEBUG: Log PnL values from response to diagnose multiplication issue
   if (tradeResults.length > 0) {
     const firstTrade = tradeResults[0];
-    console.log('[BacktestResults] First trade:', firstTrade.trade_date);
     if (firstTrade.legs && firstTrade.legs.length > 0) {
-      console.log('[BacktestResults] First trade legs PnL values:');
       firstTrade.legs.forEach((leg, idx) => {
-        console.log(`  Leg ${idx + 1}:`, {
-          pnl: leg.pnl,
-          lot_size: leg.lot_size || leg.qty,
-          entry_price: leg.entry_price,
-          exit_price: leg.exit_price
-        });
       });
     }
   }
@@ -149,7 +138,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
         allTrades.push({ ...leg, trade_date: record.trade_date });
       });
     });
-    // Build equity curve from trade_results for charts
     let cumPnl = 0;
     let peak = 0;
     tradeResults.forEach((record) => {
@@ -161,17 +149,14 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
     });
   }
 
-  // ── Helper: safe number parsers ───────────────────────────────────────────
   const toNum = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
   const toInt = (v) => { const n = parseInt(v, 10); return isNaN(n) ? 0 : n; };
   const r2    = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
-  // ── Try backend pre-computed summaryreportResult first ────────────────────
   const summaryReports      = activeResults?.data?.summary_report_result || activeResults?.data?.summaryreportResult || [];
   const daywiseSummaryRaw   = summaryReports.find(r => r.reportType?.toLowerCase().includes('day'))?.summaryReport   || {};
   const tradewiseSummaryRaw = summaryReports.find(r => r.reportType?.toLowerCase().includes('trade'))?.summaryReport || {};
 
-  // Map backend PascalCase field names → UI snake_case field names
   const mapBackendSummary = (raw, isDay) => ({
     overall_profit:          toNum(raw.OverallProfit),
     no_of_trades:            toInt(isDay ? raw.NumberOfDays      : raw.NumberOfTrades),
@@ -192,8 +177,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
     max_loss_streak:         toInt(raw.MaxLossingStreak),
   });
 
-  // ── Compute stats from raw trade_results as fallback ─────────────────────
-  // Used when backend summaryreportResult is missing or all-zero.
   const computeStats = (trades) => {
     if (!trades.length) return mapBackendSummary({}, true);
     const profitTrades = trades.filter(t => (t.pnl || 0) > 0);
@@ -232,7 +215,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
     };
   };
 
-  // ── Build day-level trade list (one entry per trading day) ────────────────
   const dayTradeList = useMemo(() => {
     const map = new Map();
     allTrades.forEach(leg => {
@@ -243,9 +225,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
     return Array.from(map.values()).sort((a,b) => a.trade_date.localeCompare(b.trade_date));
   }, [allTrades]);
 
-  // ── Pick the right stats: backend pre-computed OR computed from trades ────
-  // Try backend summaryreportResult — if OverallProfit is non-zero, use it.
-  // Otherwise fall back to computing from trade_results directly.
   const backendDayStats   = mapBackendSummary(daywiseSummaryRaw,   true);
   const backendTradeStats = mapBackendSummary(tradewiseSummaryRaw, false);
 
@@ -255,19 +234,13 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
   const daywiseSummary   = hasDayStats   ? backendDayStats   : computeStats(dayTradeList);
   const tradewiseSummary = hasTradeStats ? backendTradeStats : computeStats(allTrades);
 
-  // activeStats switches based on the Day wise / Trade wise toggle
   const activeStats = statsView === 'day' ? daywiseSummary : tradewiseSummary;
-  // Direct raw reference so we never lose un-mapped fields
   const activeRaw = statsView === 'day' ? daywiseSummaryRaw : tradewiseSummaryRaw;
-    // ── Helper functions to safely extract Max Drawdown fields ────────────────
   const getDaysInMaxDrawdown = () => {
-    console.log('[BacktestResults] Getting Days in Max Drawdown:', activeRaw['Days_of_Max_Drawdown']);
     const possibleNames = ['Days_of_Max_Drawdown', 'DaysOfMaxDrawdown', 'days_of_max_drawdown'];
     for (const name of possibleNames) {
       const value = activeRaw[name];
       if (value !== undefined && value !== null && value !== '' && value !== 0) {
-        console.log(`[BacktestResults] ✓ Found: "${name}" = "${value}"`);
-        // Extract just the number from strings like "10 [2022-06-07 to 2022-06-17]"
         const strValue = String(value);
         const match = strValue.match(/^(\d+)/);
         return match ? match[1] : strValue;
@@ -277,12 +250,10 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
   };
 
   const getTradesInMaxDrawdown = () => {
-    console.log('[BacktestResults] Getting Trades in Max Drawdown:', activeRaw['MaxTradesInDrawdown']);
     const possibleNames = ['MaxTradesInDrawdown', 'maxTradesInDrawdown', 'max_trades_in_drawdown'];
     for (const name of possibleNames) {
       const value = activeRaw[name];
       if (value !== undefined && value !== null && value !== 0) {
-        console.log(`[BacktestResults] ✓ Found: "${name}" = "${value}"`);
         return value;
       }
     }
@@ -291,20 +262,13 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
 
 
 
-  // Day-wise vs trade-wise: when day-wise is selected and the sample contains
-  // an explicit in/out-of-sample flag, honor the In/Out Sample toggle.
   const scopedTrades = useMemo(() => {
     if (!inOutSample) return allTrades;
-    // Only filter if the backend actually tags trades with a sample flag;
-    // otherwise fall back to showing everything so the toggle never hides data silently.
     const hasSampleFlag = allTrades.some(t => t.sample === 'out' || t.is_out_of_sample !== undefined);
     if (!hasSampleFlag) return allTrades;
     return allTrades.filter(t => t.sample === 'out' || t.is_out_of_sample === true);
   }, [allTrades, inOutSample]);
 
-  // ---- Group trades by trading day for the "Full Report" table (matches the
-  // reference layout: a day-summary row like "2 | 2025-07-17 | ... | 2288.00"
-  // followed by one row per leg, e.g. "2.1 | Leg_1 | ...").
   const dayGroups = useMemo(() => {
     const map = new Map();
     scopedTrades.forEach((leg) => {
@@ -317,12 +281,9 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
     });
 
     return Array.from(map.values()).map((group) => {
-      // Preserve chronological entry order (allTrades is already time-sorted, and
-      // reentries repeat the same `leg` number, so sorting by leg would scramble the timeline).
       const legsSorted = [...group.legs].sort((a, b) => new Date(a.entry_datetime) - new Date(b.entry_datetime));
       const firstLeg = legsSorted[0];
       const entryDate = firstLeg?.entry_datetime ? new Date(firstLeg.entry_datetime) : null;
-      // Day's exit = the latest exit among its legs
       const exitDates = legsSorted
         .map(l => (l.exit_datetime ? new Date(l.exit_datetime) : null))
         .filter(Boolean);
@@ -348,15 +309,11 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
       if (sortField === 'Exit Date') {
         return ((a.exitDate?.getTime() || 0) - (b.exitDate?.getTime() || 0)) * dir;
       }
-      // Default: Entry Date
       return ((a.entryDate?.getTime() || 0) - (b.entryDate?.getTime() || 0)) * dir;
     });
     return groups;
   }, [dayGroups, sortField, sortDir]);
 
-  // Pack whole day-groups into pages, targeting PAGE_LEG_TARGET leg rows per page.
-  // A day's legs are never split across two pages — if a single day has more legs
-  // than the target (e.g. a 10-leg entry strategy), that day still gets its own page.
   const pages = useMemo(() => {
     const result = [];
     let current = [];
@@ -386,7 +343,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
   const pageNumbers = Array.from({ length: Math.min(totalPages, 10) }, (_, i) => i + 1);
 
   const formatExpiry = (leg) => {
-    // Ticker shape: O:SPXW220601C04050000 / O:SPXW220601P04200000 -> YYMMDD + C/P + strike*1000
     const match = (leg.ticker || '').match(/SPXW(\d{6})[CP]/);
     if (match) {
       const [, yymmdd] = match;
@@ -401,7 +357,7 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
   const goToPage = (p) => setPage(Math.min(Math.max(1, p), totalPages));
 
   return (
-    <div key={`results-${refreshKey}`}>
+    <div ref={resultsRef} key={`results-${refreshKey}`}>
       {/* Toast Notification - Success Message */}
       {showSuccessMessage && (
         <div className="fixed top-8 left-1/2 transform -translate-x-1/2 z-50 animate-fade-in">
@@ -436,13 +392,13 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
               <div className="relative">
                 <input 
                   type="number" 
-                  value={slippage}
+                  value={slippage === 0 ? '' : slippage}
                   onChange={(e) => {
                     setSlippage(parseFloat(e.target.value) || 0);
                     setSlippageCalculated(false);
                   }}
                   className="w-24 px-3 py-2 pr-8 text-sm border border-gray-300 rounded-lg bg-white font-medium hover:border-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                  placeholder="0.0"
+                  placeholder="0"
                   step="0.1"
                   min="0"
                 />
@@ -452,7 +408,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
             
             <button 
               onClick={async () => {
-                // Removed the -999 popup - user can run backtest without saving
                 
                 try {
                   const requestPayload = {
@@ -460,7 +415,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                     slippage_percent: slippage  // Changed from Slippage_percent to slippage_percent
                   };
 
-                  console.log('Applying slippage with payload:', requestPayload);
 
                   const response = await fetch(`${API_URL}/apply-slippage`, {
                     method: 'POST',
@@ -470,46 +424,30 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                     body: JSON.stringify(requestPayload)
                   });
 
-                  console.log('Response status:', response.status);
 
                   if (!response.ok) {
-                    // Try to get error details from response
                     let errorMessage = 'Failed to apply slippage';
                     try {
                       const errorData = await response.json();
                       errorMessage = errorData.message || errorData.error || errorData.detail || errorMessage;
-                      console.error('Error response:', errorData);
+                      logger.error('Error response:', errorData);
                     } catch (e) {
                       const errorText = await response.text();
                       errorMessage = errorText || errorMessage;
-                      console.error('Error response text:', errorText);
+                      logger.error('Error response text:', errorText);
                     }
                     throw new Error(errorMessage);
                   }
 
                   const result = await response.json();
-                  console.log('═══════════════════════════════════════════════════');
-                  console.log('[Slippage] FULL RESPONSE FROM BACKEND:');
-                  console.log('═══════════════════════════════════════════════════');
-                  console.log(JSON.stringify(result, null, 2));
-                  console.log('═══════════════════════════════════════════════════');
                   
                   if (result.success && result.data) {
-                    // Store the slippage-adjusted results
-                    console.log('[Slippage] Setting slippageResults with data:', {
-                      trade_results_count: result.data.trade_results?.length,
-                      summary_count: result.data.summary_report_result?.length,
-                      full_data_keys: Object.keys(result.data)
-                    });
                     
                     setSlippageResults(result.data);
                     setSlippageCalculated(true);
                     setRefreshKey(prev => prev + 1); // Force component re-render
                     
-                    console.log('[Slippage] State updated, component should re-render');
-                    console.log('[Slippage] slippageResults state is now:', result.data);
                     
-                    // Show success message in green
                     setShowSuccessMessage(true);
                     setTimeout(() => setShowSuccessMessage(false), 3000); // Hide after 3 seconds
                   } else {
@@ -517,9 +455,8 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                   }
                   
                 } catch (error) {
-                  console.error('Error applying slippage:', error);
+                  logger.error('Error applying slippage:', error);
                   
-                  // Show red error message
                   setShowErrorMessage(true);
                   setTimeout(() => setShowErrorMessage(false), 3000); // Hide after 3 seconds
                   
@@ -805,14 +742,12 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
             </button>
             <button
               onClick={() => {
-                // Helper function to get weekday
                 const getWeekday = (dateStr) => {
                   if (!dateStr) return '';
                   const date = new Date(dateStr);
                   return date.toLocaleDateString('en-US', { weekday: 'long' });
                 };
                 
-                // Helper function to format expiry
                 const formatExpiry = (leg) => {
                   if (!leg.expiry) return '';
                   if (leg.expiry.includes('DTE') || leg.expiry.includes('dte')) return leg.expiry.toUpperCase();
@@ -820,7 +755,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                   return !isNaN(exp) ? exp.toISOString().split('T')[0] : leg.expiry;
                 };
                 
-                // Group legs by date first
                 const grouped = {};
                 allTrades.forEach((leg, idx) => {
                   const entryDate = leg.entry_datetime ? new Date(leg.entry_datetime) : null;
@@ -831,7 +765,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                   grouped[dateKey].legs.push({ ...leg, globalIndex: idx });
                 });
                 
-                // Export header matching the UI table
                 const header = ['Index', 'Leg', 'Entry Date', 'Weekday', 'Entry Time', 'Entry Price', 'Qty', 'Instrument', 'Strike Price', 'B/S', 'Exit Date', 'Exit Time', 'Exit Price', 'P/L', 'Expiry Date', 'Remark'];
                 
                 const rows = [];
@@ -840,7 +773,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                   const dayIndex = groupIdx + 1;
                   const dayPnl = group.legs.reduce((sum, leg) => sum + (leg.pnl || 0), 0);
                   
-                  // Add day summary row
                   const firstLeg = group.legs[0];
                   const entryDate = firstLeg.entry_datetime ? new Date(firstLeg.entry_datetime) : null;
                   const entryDateStr = entryDate ? entryDate.toISOString().split('T')[0] : dateKey;
@@ -866,7 +798,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                     '—'
                   ]);
                   
-                  // Add leg rows
                   group.legs.forEach((leg, legIdx) => {
                     const entryDate = leg.entry_datetime ? new Date(leg.entry_datetime) : null;
                     const entryDateStr = entryDate ? entryDate.toISOString().split('T')[0] : '---';
@@ -897,11 +828,9 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                   });
                 });
                 
-                // Create CSV content
                 const csvContent = [
                   header.join(','),
                   ...rows.map(row => row.map(cell => {
-                    // Escape cells containing commas or quotes
                     const str = String(cell);
                     if (str.includes(',') || str.includes('"') || str.includes('\n')) {
                       return `"${str.replace(/"/g, '""')}"`;
@@ -910,7 +839,6 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
                   }).join(','))
                 ].join('\n');
                 
-                // Download as CSV (Excel-compatible)
                 const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(blob);
@@ -1165,4 +1093,4 @@ const BacktestResults = ({ results, onSaveStrategy, strategyId, strategySavedInS
   );
 }
 
-export default BacktestResults;
+export default React.memo(BacktestResults);

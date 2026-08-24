@@ -1,9 +1,9 @@
+import logger from '../utils/logger';
 /**
  * Version Config API Service
  * Handles strategy_id and strategy_name storage in LOCAL PostgreSQL
  */
 
-// LOCAL backend URL (YOUR PC at localhost:8001, NOT backend PC at 192.168.0.125:8000!)
 const LOCAL_API_URL = "http://localhost:8001/api";
 
 /**
@@ -14,7 +14,6 @@ const LOCAL_API_URL = "http://localhost:8001/api";
  */
 export const saveStrategyToDatabase = async (strategyId, strategyName) => {
   try {
-    console.log('[VERSION_CONFIG] Saving to LOCAL database:', { strategyId, strategyName });
     
     const response = await fetch(`${LOCAL_API_URL}/version-config/save-strategy`, {
       method: 'POST',
@@ -33,14 +32,13 @@ export const saveStrategyToDatabase = async (strategyId, strategyName) => {
       throw new Error(data.detail || 'Failed to save strategy to LOCAL database');
     }
 
-    console.log('[VERSION_CONFIG] ✓ Strategy saved to LOCAL database:', data);
     return {
       success: true,
       data: data.data,
       message: data.message,
     };
   } catch (error) {
-    console.error('[VERSION_CONFIG] ✗ Failed to save to LOCAL database:', error.message);
+    logger.error('[VERSION_CONFIG] ✗ Failed to save to LOCAL database:', error.message);
     throw error;
   }
 };
@@ -52,7 +50,6 @@ export const saveStrategyToDatabase = async (strategyId, strategyName) => {
  */
 export const incrementRunCount = async (strategyId) => {
   try {
-    console.log('[VERSION_CONFIG] Incrementing run count for strategy_id:', strategyId);
     
     const response = await fetch(`${LOCAL_API_URL}/version-config/increment-run-count`, {
       method: 'POST',
@@ -70,14 +67,13 @@ export const incrementRunCount = async (strategyId) => {
       throw new Error(data.detail || 'Failed to increment run count');
     }
 
-    console.log('[VERSION_CONFIG] ✓ Run count incremented:', data);
     return {
       success: true,
       data: data.data,
       message: data.message,
     };
   } catch (error) {
-    console.error('[VERSION_CONFIG] ✗ Failed to increment run count:', error.message);
+    logger.error('[VERSION_CONFIG] ✗ Failed to increment run count:', error.message);
     throw error;
   }
 };
@@ -89,7 +85,6 @@ export const incrementRunCount = async (strategyId) => {
  */
 export const getStrategyFromDatabase = async (strategyId) => {
   try {
-    console.log('[VERSION_CONFIG] Retrieving strategy_id:', strategyId);
     
     const response = await fetch(`${LOCAL_API_URL}/version-config/get-strategy/${strategyId}`, {
       method: 'GET',
@@ -104,13 +99,12 @@ export const getStrategyFromDatabase = async (strategyId) => {
       throw new Error(data.detail || 'Failed to retrieve strategy from LOCAL database');
     }
 
-    console.log('[VERSION_CONFIG] ✓ Strategy retrieved:', data);
     return {
       success: true,
       data: data.data,
     };
   } catch (error) {
-    console.error('[VERSION_CONFIG] ✗ Failed to retrieve strategy:', error.message);
+    logger.error('[VERSION_CONFIG] ✗ Failed to retrieve strategy:', error.message);
     throw error;
   }
 };
@@ -121,7 +115,6 @@ export const getStrategyFromDatabase = async (strategyId) => {
  */
 export const getAllStrategiesFromDatabase = async () => {
   try {
-    console.log('[VERSION_CONFIG] Retrieving all strategies');
     
     const response = await fetch(`${LOCAL_API_URL}/version-config/get-all-strategies`, {
       method: 'GET',
@@ -136,14 +129,13 @@ export const getAllStrategiesFromDatabase = async () => {
       throw new Error(data.detail || 'Failed to retrieve strategies from LOCAL database');
     }
 
-    console.log('[VERSION_CONFIG] ✓ Retrieved all strategies:', data);
     return {
       success: true,
       data: data.data,
       count: data.count,
     };
   } catch (error) {
-    console.error('[VERSION_CONFIG] ✗ Failed to retrieve all strategies:', error.message);
+    logger.error('[VERSION_CONFIG] ✗ Failed to retrieve all strategies:', error.message);
     throw error;
   }
 };
@@ -155,7 +147,6 @@ export const getAllStrategiesFromDatabase = async () => {
  */
 export const deleteStrategyFromDatabase = async (strategyId) => {
   try {
-    console.log('[VERSION_CONFIG] Deleting strategy_id:', strategyId);
     
     const response = await fetch(`${LOCAL_API_URL}/version-config/delete-strategy/${strategyId}`, {
       method: 'DELETE',
@@ -170,13 +161,12 @@ export const deleteStrategyFromDatabase = async (strategyId) => {
       throw new Error(data.detail || 'Failed to delete strategy from LOCAL database');
     }
 
-    console.log('[VERSION_CONFIG] ✓ Strategy deleted:', data);
     return {
       success: true,
       message: data.message,
     };
   } catch (error) {
-    console.error('[VERSION_CONFIG] ✗ Failed to delete strategy:', error.message);
+    logger.error('[VERSION_CONFIG] ✗ Failed to delete strategy:', error.message);
     throw error;
   }
 };

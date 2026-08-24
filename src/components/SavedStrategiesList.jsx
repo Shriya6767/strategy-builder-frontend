@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Trash2, RefreshCw, Folder, Activity, ChevronDown, X } from 'lucide-react';
 import { API_URL } from '../services/api';
 import { deleteStrategy } from '../services/strategyApi';
+import logger from '../utils/logger';
 
 const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast, onRefreshStrategies, refreshKey }) => {
   const [strategies, setStrategies] = useState([]);
@@ -15,31 +16,22 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
   const [strategyToDelete, setStrategyToDelete] = useState(null);
 
   const fetchStrategies = async () => {
-    console.log('[SavedStrategiesList] Loading strategies from localStorage...');
     setLoading(true);
-    // ⭐ Close any open dropdowns when fetching
     setOpenDropdown(null);
     try {
-      // ⭐ Load from localStorage instead of backend API
       const savedCards = JSON.parse(localStorage.getItem('saved_strategies_cards') || '[]');
       
-      console.log('[SavedStrategiesList] ✓ Loaded strategies from localStorage:', savedCards.length);
       
-      // Sort by created_at (newest first)
       savedCards.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
       
-      // DEBUG: Log each strategy name
       savedCards.forEach((s, idx) => {
-        console.log(`[SavedStrategiesList] Strategy ${idx}: id=${s.id}, name="${s.name}"`);
       });
       
       setStrategies(savedCards);
-      console.log('[SavedStrategiesList] openDropdown state:', openDropdown);
     } catch (error) {
-      console.error('[SavedStrategiesList] Error loading strategies from localStorage:', error);
+      logger.error('[SavedStrategiesList] Error loading strategies from localStorage:', error);
       setStrategies([]);
       
-      // Show error toast if callback is available
       if (onShowToast) {
         onShowToast(`Failed to load strategies: ${error.message}`, 'error');
       }
@@ -50,11 +42,9 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
 
   useEffect(() => {
     fetchStrategies();
-    // ⭐ Close any open dropdowns when list refreshes
     setOpenDropdown(null);
-  }, [refreshKey]); // ⭐ Re-fetch when refreshKey changes (after save)
+  }, [refreshKey]);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -69,16 +59,13 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
   }, []);
 
   const toggleDropdown = (strategyId) => {
-    // ⭐ FIX: Don't toggle if strategyId is null or undefined
     if (strategyId === null || strategyId === undefined) {
-      console.warn('[SavedStrategiesList] Cannot toggle dropdown for strategy with null/undefined ID');
       return;
     }
     setOpenDropdown(openDropdown === strategyId ? null : strategyId);
   };
 
   const handleActivate = (strategy, mode) => {
-    console.log(`Activating ${strategy.name} in ${mode} mode`);
     setOpenDropdown(null);
     
     if (mode === 'paper') {
@@ -86,14 +73,10 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
       setShowPaperTradeModal(true);
       setPaperTradeInstances(1);
     } else if (mode === 'live') {
-      // Handle live trade activation
-      console.log('Live trade activation');
     }
   };
 
   const handlePaperTradeActivate = () => {
-    console.log(`Activating Paper Trade for ${selectedStrategy.name} with ${paperTradeInstances} instances`);
-    // Add your paper trade activation logic here
     setShowPaperTradeModal(false);
     setSelectedStrategy(null);
   };
@@ -105,37 +88,24 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
   };
 
   const handleStrategyClick = async (strategy) => {
-    console.log('[SavedStrategiesList] ========== STRATEGY CLICK DEBUG START ==========');
-    console.log('[SavedStrategiesList] Strategy button clicked');
-    console.log('[SavedStrategiesList] strategy object:', strategy);
-    console.log('[SavedStrategiesList] strategy.id:', strategy.id);
-    console.log('[SavedStrategiesList] strategy.name:', strategy.name);
-    console.log('[SavedStrategiesList] strategy.name type:', typeof strategy.name);
-    console.log('[SavedStrategiesList] strategy.name length:', strategy.name?.length);
-    console.log('[SavedStrategiesList] strategy.name charCodes:', strategy.name?.split('').map(c => c.charCodeAt(0)));
-    console.log('[SavedStrategiesList] Calling onLoadStrategy with:', { id: strategy.id, name: strategy.name });
-    console.log('[SavedStrategiesList] ========== STRATEGY CLICK DEBUG END ==========');
     
-    // Load the strategy by ID and name from backend
     if (onLoadStrategy) {
       try {
         await onLoadStrategy(strategy.id, strategy.name);
         
-        // Navigate to builder tab after successful load
         if (onNavigateToBuilder) {
           onNavigateToBuilder();
         }
       } catch (error) {
-        console.error('[SavedStrategiesList] Error loading strategy:', error);
+        logger.error('[SavedStrategiesList] Error loading strategy:', error);
         alert(`Failed to load strategy: ${error.message}`);
       }
     } else {
-      console.error('[SavedStrategiesList] onLoadStrategy callback is not defined!');
+      logger.error('[SavedStrategiesList] onLoadStrategy callback is not defined!');
     }
   };
 
   const handleDelete = async (strategyId, strategyName) => {
-    // Show custom delete modal instead of browser confirm
     setStrategyToDelete({ id: strategyId, name: strategyName });
     setShowDeleteModal(true);
   };
@@ -146,46 +116,35 @@ const SavedStrategiesList = ({ onLoadStrategy, onNavigateToBuilder, onShowToast,
     const { id: strategyId, name: strategyName } = strategyToDelete;
 
     try {
-      console.log('[SavedStrategiesList] Deleting strategy from localStorage...');
       
-      // ⭐ Remove from localStorage
       const savedCards = JSON.parse(localStorage.getItem('saved_strategies_cards') || '[]');
       const updatedCards = savedCards.filter(card => card.id !== strategyId);
       localStorage.setItem('saved_strategies_cards', JSON.stringify(updatedCards));
       
-      console.log('[SavedStrategiesList] ✓ Strategy deleted from localStorage');
       
-      // Show success toast
       if (onShowToast) {
         onShowToast(`Strategy "${strategyName}" deleted successfully!`, 'success');
       }
       
-      // Refresh the list
       fetchStrategies();
       
-      // Trigger parent refresh if needed
       if (onRefreshStrategies) {
         onRefreshStrategies();
       }
       
-      // ⭐ OPTIONAL: Also delete from backend if needed
       try {
         await deleteStrategy(strategyId, strategyName);
-        console.log('[SavedStrategiesList] ✓ Strategy also deleted from backend');
       } catch (backendError) {
-        console.warn('[SavedStrategiesList] ⚠️ Failed to delete from backend (continuing anyway):', backendError);
       }
     } catch (error) {
-      console.error('[SavedStrategiesList] Delete error:', error);
+      logger.error('[SavedStrategiesList] Delete error:', error);
       
-      // Show error toast
       if (onShowToast) {
         onShowToast(`Failed to delete strategy: ${error.message}`, 'error');
       } else {
         alert(`Failed to delete strategy: ${error.message}`);
       }
     } finally {
-      // Close modal
       setShowDeleteModal(false);
       setStrategyToDelete(null);
     }

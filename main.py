@@ -12,7 +12,8 @@ import json
 import math
 
 # Import version config router for database operations
-from version_config_api import router as version_config_router
+# from version_config_api import router as version_config_router
+# Commented out temporarily - module not found
 
 app = FastAPI(title="Strategy Backtester API", version="1.0.0")
 
@@ -32,7 +33,8 @@ app.add_middleware(
 # INCLUDE ROUTERS - Version Config Database Operations
 # ============================================================================
 
-app.include_router(version_config_router, prefix="/api")
+# app.include_router(version_config_router, prefix="/api")
+# Commented out temporarily - module not found
 
 # ============================================================================
 # IN-MEMORY SESSION STORE

@@ -8,7 +8,6 @@ const SavedStrategiesViewer = ({ isOpen, onToggle }) => {
   const fetchStrategies = async () => {
     setLoading(true);
     try {
-      // Fetch from backend API only - no localStorage fallback
       const response = await fetch('/api/strategies/list');
       
       if (!response.ok) {
@@ -20,11 +19,10 @@ const SavedStrategiesViewer = ({ isOpen, onToggle }) => {
       if (data.status === 'success') {
         setStrategies(data.strategies || []);
       } else {
-        console.warn('Backend returned no strategies');
         setStrategies([]);
       }
     } catch (error) {
-      console.error('Error fetching strategies:', error);
+      logger.error('Error fetching strategies:', error);
       setStrategies([]);
     } finally {
       setLoading(false);
@@ -43,7 +41,6 @@ const SavedStrategiesViewer = ({ isOpen, onToggle }) => {
     }
 
     try {
-      // Delete from backend API only - no localStorage
       const response = await fetch(`/api/strategies/delete/${strategyId}`, {
         method: 'DELETE',
       });
@@ -60,7 +57,7 @@ const SavedStrategiesViewer = ({ isOpen, onToggle }) => {
         throw new Error(data.error || 'Failed to delete strategy');
       }
     } catch (error) {
-      console.error('Delete error:', error);
+      logger.error('Delete error:', error);
       alert(`Failed to delete strategy: ${error.message}`);
     }
   };
@@ -108,6 +105,7 @@ const SavedStrategiesViewer = ({ isOpen, onToggle }) => {
         
         @keyframes fadeInOverlay {
           from {
+import logger from '../utils/logger';
             opacity: 0;
           }
           to {

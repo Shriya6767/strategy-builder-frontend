@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Key, CheckCircle, XCircle, Loader, Trash2 } from 'lucide-react';
+import logger from '../utils/logger';
 
 const LiveTradingSettings = () => {
   const [broker, setBroker] = useState('ibkr');
@@ -26,7 +27,7 @@ const LiveTradingSettings = () => {
         setIsConfigured(data.data.is_configured);
       }
     } catch (error) {
-      console.error('Failed to check configuration:', error);
+      logger.error('Failed to check configuration:', error);
     }
   };
 
@@ -38,8 +39,6 @@ const LiveTradingSettings = () => {
     setTestResult(null);
   };
 
-  // Port is HARDCODED to 7497 - Paper Trading ONLY
-  // Live Trading (port 7496) is DISABLED for safety
 
   const handleTestConnection = async () => {
     if (!credentials.host || !credentials.port) {
