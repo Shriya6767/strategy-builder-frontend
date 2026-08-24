@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Activity, TrendingUp, TrendingDown, Clock, Target, AlertTriangle, CheckCircle, XCircle, Pause, Play, Settings, Download, RefreshCw, ChevronDown, ChevronUp, DollarSign, Percent, Calendar, BarChart3, TrendingUp as TrendUp, TrendingDown as TrendDown } from 'lucide-react';
 import TWSStylePositionsTable from './TWSStylePositionsTable';
+import logger from '../utils/logger';
 
 const AutoTradingMonitor = ({ onBack }) => {
   const [status, setStatus] = useState(null);
@@ -41,7 +42,7 @@ const AutoTradingMonitor = ({ onBack }) => {
         setLoading(false);
       }
     } catch (error) {
-      console.error('Failed to fetch status:', error);
+      logger.error('Failed to fetch status:', error);
       addToLog(`❌ Failed to fetch status: ${error.message}`, 'error');
     }
   };
@@ -54,7 +55,6 @@ const AutoTradingMonitor = ({ onBack }) => {
       if (data.status === 'success') {
         setPositionsData(data.data);
         
-        // Add to activity log
         if (data.data.positions && data.data.positions.length > 0) {
           data.data.positions.forEach(pos => {
             checkPositionAlerts(pos);
@@ -66,7 +66,7 @@ const AutoTradingMonitor = ({ onBack }) => {
         }
       }
     } catch (error) {
-      console.error('Failed to fetch positions data:', error);
+      logger.error('Failed to fetch positions data:', error);
       addToLog(`❌ Failed to fetch positions: ${error.message}`, 'error');
     }
   };
@@ -80,14 +80,13 @@ const AutoTradingMonitor = ({ onBack }) => {
         setPerformanceMetrics(data.data);
       }
     } catch (error) {
-      console.error('Failed to fetch performance metrics:', error);
+      logger.error('Failed to fetch performance metrics:', error);
     }
   };
 
   const checkPositionAlerts = (position) => {
     const pnl = position.pnl_pct || 0;
     
-    // Alert for significant gains/losses
     if (Math.abs(pnl) > 20) {
       const alertType = pnl > 0 ? 'success' : 'danger';
       const message = `${position.symbol || 'Position'} ${pnl > 0 ? 'gained' : 'lost'} ${Math.abs(pnl).toFixed(1)}%`;
@@ -110,7 +109,6 @@ const AutoTradingMonitor = ({ onBack }) => {
     
     setAlerts(prev => [alert, ...prev.slice(0, 9)]); // Keep last 10 alerts
     
-    // Auto-remove after 10 seconds
     setTimeout(() => {
       setAlerts(prev => prev.filter(a => a.id !== alert.id));
     }, 10000);
@@ -136,7 +134,7 @@ const AutoTradingMonitor = ({ onBack }) => {
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.5);
     } catch (error) {
-      console.error('Could not play alert sound:', error);
+      logger.error('Could not play alert sound:', error);
     }
   };
 
@@ -229,7 +227,6 @@ const AutoTradingMonitor = ({ onBack }) => {
     }
   };
 
-  // Enhanced position calculation utilities
   const calculateTimeToExpiry = (expiryDate) => {
     if (!expiryDate) return 'N/A';
     
@@ -257,7 +254,6 @@ const AutoTradingMonitor = ({ onBack }) => {
       
       if (strike === 0 || premium === 0) return { upper: 'N/A', lower: 'N/A' };
       
-      // For straddle: breakeven = strike ± premium
       const upper = (strike + premium).toFixed(2);
       const lower = (strike - premium).toFixed(2);
       
@@ -278,14 +274,11 @@ const AutoTradingMonitor = ({ onBack }) => {
       
       if (entryPrice === 0) return { risk: 'N/A', reward: 'N/A', ratio: 'N/A' };
       
-      // Risk = Maximum possible loss (premium paid)
       const risk = Math.abs(entryPrice * quantity * multiplier);
       
-      // Reward = Current unrealized gain (if positive)
       const currentPnL = (currentPrice - entryPrice) * quantity * multiplier;
       const reward = Math.max(currentPnL, 0);
       
-      // Risk/Reward ratio
       const ratio = reward > 0 ? (reward / risk).toFixed(2) : '0.00';
       
       return {

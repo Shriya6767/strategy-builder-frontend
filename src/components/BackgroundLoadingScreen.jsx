@@ -11,7 +11,6 @@ const BackgroundLoadingScreen = ({ isVisible, duration = 60, onComplete }) => {
       return;
     }
 
-    // Reset timer when loading screen becomes visible
     setTimeLeft(duration);
     setProgress(100);
 
@@ -21,7 +20,6 @@ const BackgroundLoadingScreen = ({ isVisible, duration = 60, onComplete }) => {
         const newProgress = (newTime / duration) * 100;
         setProgress(newProgress);
 
-        // When timer reaches 0
         if (newTime <= 0) {
           clearInterval(interval);
           if (onComplete) {

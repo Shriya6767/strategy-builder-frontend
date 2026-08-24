@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { X, Save, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import logger from '../utils/logger';
 
 const SaveStrategyModal = ({ isOpen, onClose, onSave, currentStrategyName = '', saveStatus = null, saveMessage = '' }) => {
   const [strategyName, setStrategyName] = useState(currentStrategyName);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Sync saving state with parent saveStatus
   useEffect(() => {
     if (saveStatus === 'loading') {
       setSaving(true);
@@ -26,7 +26,6 @@ const SaveStrategyModal = ({ isOpen, onClose, onSave, currentStrategyName = '', 
       return;
     }
 
-    // ⭐ NEW: Check if strategy name already exists in localStorage
     try {
       const savedStrategies = JSON.parse(localStorage.getItem('saved_strategies_cards') || '[]');
       const nameExists = savedStrategies.some(
@@ -38,8 +37,7 @@ const SaveStrategyModal = ({ isOpen, onClose, onSave, currentStrategyName = '', 
         return; // Don't proceed with save
       }
     } catch (err) {
-      console.error('Error checking strategy names:', err);
-      // Continue with save if localStorage check fails
+      logger.error('Error checking strategy names:', err);
     }
 
     setSaving(true);
@@ -47,11 +45,9 @@ const SaveStrategyModal = ({ isOpen, onClose, onSave, currentStrategyName = '', 
     
     try {
       await onSave(strategyName.trim());
-      // Reset form on success (modal will close via parent)
       setStrategyName('');
     } catch (error) {
-      console.error('Save error:', error);
-      // Error is handled by parent, just update local error for display
+      logger.error('Save error:', error);
       if (!saveMessage) {
         setError(error.message || 'Failed to save strategy');
       }

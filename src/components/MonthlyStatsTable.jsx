@@ -41,8 +41,6 @@ const MonthlyStatsTable = ({ monthlyStats }) => {
           </thead>
           <tbody>
             {Object.entries(monthlyStats).map(([year, yearData], yearIndex) => {
-              // Support either a flat { Jan: 123, ... } shape or a richer
-              // { months: {...}, total, max_drawdown, mdd_start, mdd_end } shape.
               const monthsData = yearData.months || yearData;
               const total = yearData.total ?? months.reduce((sum, m) => {
                 const v = monthsData[m];
@@ -52,7 +50,6 @@ const MonthlyStatsTable = ({ monthlyStats }) => {
               const mddStart = yearData.mdd_start ?? yearData.mddStart ?? null;
               const mddEnd = yearData.mdd_end ?? yearData.mddEnd ?? null;
               const daysForMdd = yearData.days_for_mdd ?? yearData.daysForMdd ?? null;
-              // Return-to-Max-Drawdown ratio: how many rupees of return per rupee of max drawdown risked.
               const rMdd = yearData.r_mdd ?? yearData.rMdd ??
                 (maxDrawdown ? total / Math.abs(maxDrawdown) : null);
 

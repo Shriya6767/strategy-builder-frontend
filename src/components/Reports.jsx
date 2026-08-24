@@ -4,23 +4,21 @@ import { ReportCardSkeleton } from './SkeletonLoader';
 import Tooltip from './Tooltip';
 import Breadcrumb from './Breadcrumb';
 import { API_URL } from '../services/api';
+import logger from '../utils/logger';
 
 const Reports = ({ onSwitchToBuilder }) => {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Format date to Indian format (DD-MM-YYYY hh:mm AM/PM)
   const formatIndianDateTime = (dateString) => {
     try {
       const date = new Date(dateString);
       
-      // Format date as DD-MM-YYYY
       const day = String(date.getDate()).padStart(2, '0');
       const month = String(date.getMonth() + 1).padStart(2, '0');
       const year = date.getFullYear();
       
-      // Format time as hh:mm AM/PM
       let hours = date.getHours();
       const minutes = String(date.getMinutes()).padStart(2, '0');
       const ampm = hours >= 12 ? 'PM' : 'AM';
@@ -34,22 +32,18 @@ const Reports = ({ onSwitchToBuilder }) => {
     }
   };
 
-  // Format period from "2023-01 to 2023-04" to "01-01-23 to 30-04-23"
   const formatPeriod = (periodString) => {
     try {
       if (!periodString || periodString === 'N/A') return 'N/A';
       
-      // Split the period string
       const parts = periodString.split(' to ');
       if (parts.length !== 2) return periodString;
       
       const [startPart, endPart] = parts;
       
-      // Parse start date (YYYY-MM)
       const [startYear, startMonth] = startPart.split('-');
       const startDate = `01-${startMonth}-${startYear.slice(-2)}`;
       
-      // Parse end date (YYYY-MM) and get last day of month
       const [endYear, endMonth] = endPart.split('-');
       const lastDay = new Date(parseInt(endYear), parseInt(endMonth), 0).getDate();
       const endDate = `${String(lastDay).padStart(2, '0')}-${endMonth}-${endYear.slice(-2)}`;
@@ -60,7 +54,6 @@ const Reports = ({ onSwitchToBuilder }) => {
     }
   };
 
-  // Fetch saved reports from backend
   const fetchReports = async () => {
     setLoading(true);
     setError(null);
@@ -68,38 +61,31 @@ const Reports = ({ onSwitchToBuilder }) => {
       const response = await fetch(`${API_URL}/reports/list`);
       const data = await response.json();
       
-      console.log('[Reports] Fetched reports data:', data);
       
       if (data.status === 'success') {
-        console.log('[Reports] Number of reports:', data.reports?.length);
-        console.log('[Reports] First report config:', data.reports?.[0]?.config);
         setReports(data.reports || []);
       } else {
         setError(data.error || 'Failed to load reports');
       }
     } catch (err) {
       setError('Failed to connect to backend');
-      console.error('Error fetching reports:', err);
+      logger.error('Error fetching reports:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Load reports on component mount
   useEffect(() => {
     fetchReports();
   }, []);
 
-  // Download report
   const handleDownload = async (filename, format) => {
     try {
       const response = await fetch(`${API_URL}/reports/download?filename=${filename}&format=${format}`);
       
-      // Check if response is JSON (error) or file (success)
       const contentType = response.headers.get('content-type');
       
       if (contentType && contentType.includes('application/json')) {
-        // It's an error response
         const errorData = await response.json();
         throw new Error(errorData.error || 'Download failed');
       }
@@ -108,13 +94,11 @@ const Reports = ({ onSwitchToBuilder }) => {
         throw new Error('Download failed');
       }
       
-      // It's a file - download it
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       
-      // Set proper filename based on format
       const downloadFilename = filename.replace('.json', format === 'xlsx' ? '.xlsx' : '.csv');
       a.download = downloadFilename;
       
@@ -123,12 +107,11 @@ const Reports = ({ onSwitchToBuilder }) => {
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      console.error('Download error:', error);
+      logger.error('Download error:', error);
       alert(`Failed to download report:\n\n${error.message}`);
     }
   };
 
-  // Delete report
   const handleDelete = async (filename) => {
     if (!window.confirm(`Are you sure you want to delete ${filename}?`)) {
       return;
@@ -142,24 +125,21 @@ const Reports = ({ onSwitchToBuilder }) => {
       const data = await response.json();
       
       if (data.status === 'success') {
-        // Refresh the list
         fetchReports();
       } else {
         alert(data.error || 'Failed to delete report');
       }
     } catch (error) {
-      console.error('Delete error:', error);
+      logger.error('Delete error:', error);
       alert('Failed to delete report');
     }
   };
 
-  // Delete all reports
   const handleDeleteAll = async () => {
     if (!window.confirm(`Are you sure you want to delete ALL ${reports.length} reports?\n\nThis action cannot be undone!`)) {
       return;
     }
 
-    // Double confirmation for safety
     if (!window.confirm(`⚠️ FINAL WARNING ⚠️\n\nThis will permanently delete all ${reports.length} reports.\n\nClick OK to proceed.`)) {
       return;
     }
@@ -173,13 +153,12 @@ const Reports = ({ onSwitchToBuilder }) => {
       
       if (data.status === 'success') {
         alert(`Successfully deleted ${data.deleted_count} reports`);
-        // Refresh the list
         fetchReports();
       } else {
         alert(data.error || 'Failed to delete reports');
       }
     } catch (error) {
-      console.error('Delete all error:', error);
+      logger.error('Delete all error:', error);
       alert('Failed to delete reports');
     }
   };

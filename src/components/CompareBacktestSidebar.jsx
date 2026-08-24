@@ -1,14 +1,14 @@
 import { X } from 'lucide-react';
+import logger from '../utils/logger';
 
 /**
  * CompareBacktestSidebar - Displays strategy version comparison
  * Shows all backtest versions for a strategy in a table format
  * Matches the reference design with right-side drawer
  */
-const CompareBacktestSidebar = ({ isOpen, onClose, compareData, strategyName, strategyId, onLoadVersion }) => {
+const CompareBacktestSidebar = ({ isOpen, onClose, compareData, strategyName, strategyId, onLoadVersion, onScrollToParameters }) => {
   if (!isOpen) return null;
 
-  // Format number with commas and 2 decimals
   const formatNumber = (num) => {
     if (num === null || num === undefined || isNaN(num)) return '-';
     return Number(num).toLocaleString('en-US', { 
@@ -17,16 +17,13 @@ const CompareBacktestSidebar = ({ isOpen, onClose, compareData, strategyName, st
     });
   };
 
-  // Format percentage
   const formatPercent = (num) => {
     if (num === null || num === undefined || isNaN(num)) return '-';
     return Number(num).toFixed(2) + '%';
   };
 
-  // Format date range for display
   const formatDateRange = (startDate, endDate) => {
     if (!startDate || !endDate) return '-';
-    // Convert from YYYY-MM-DD to DD MMM YY format
     const formatDate = (dateStr) => {
       const date = new Date(dateStr);
       const day = date.getDate().toString().padStart(2, '0');
@@ -37,7 +34,6 @@ const CompareBacktestSidebar = ({ isOpen, onClose, compareData, strategyName, st
     return `${formatDate(startDate)} - ${formatDate(endDate)}`;
   };
 
-  // Format created time
   const formatTime = (dateStr) => {
     if (!dateStr) return '-';
     try {
@@ -53,7 +49,6 @@ const CompareBacktestSidebar = ({ isOpen, onClose, compareData, strategyName, st
     }
   };
 
-  // Get color classes based on value
   const getValueColor = (value) => {
     if (value > 0) return 'text-green-600';
     if (value < 0) return 'text-red-600';
@@ -143,14 +138,14 @@ const CompareBacktestSidebar = ({ isOpen, onClose, compareData, strategyName, st
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  console.log('[CompareBacktestSidebar] Load Version clicked');
-                                  console.log('[CompareBacktestSidebar] Strategy ID:', strategyId);
-                                  console.log('[CompareBacktestSidebar] Version:', version.version);
-                                  console.log('[CompareBacktestSidebar] onLoadVersion exists?', !!onLoadVersion);
                                   if (onLoadVersion) {
                                     onLoadVersion(strategyId, version.version);
+                                    // Auto-scroll to parameters section after loading
+                                    if (onScrollToParameters) {
+                                      onScrollToParameters();
+                                    }
                                   } else {
-                                    console.error('[CompareBacktestSidebar] onLoadVersion is not defined!');
+                                    logger.error('[CompareBacktestSidebar] onLoadVersion is not defined!');
                                   }
                                 }}
                                 className="text-blue-600 hover:text-blue-800 text-xs font-medium underline mt-1 text-left"

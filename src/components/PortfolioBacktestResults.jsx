@@ -209,13 +209,39 @@ const PortfolioBacktestResults = ({
   });
   
   // Choose which data to display based on checkbox
-  const allTrades = aggregateByDay ? allTradesDaywise : allTradesLegwise;
+  let allTrades = aggregateByDay ? allTradesDaywise : allTradesLegwise;
+  
+  // Apply sorting based on user selection
+  const sortedTrades = [...allTrades].sort((a, b) => {
+    let compareValue = 0;
+    
+    if (sortBy === 'Entry date') {
+      const dateA = new Date(a.entry_date || a.trade_date || 0);
+      const dateB = new Date(b.entry_date || b.trade_date || 0);
+      compareValue = dateA - dateB;
+    } else if (sortBy === 'Exit date') {
+      const dateA = new Date(a.exit_date || a.trade_date || 0);
+      const dateB = new Date(b.exit_date || b.trade_date || 0);
+      compareValue = dateA - dateB;
+    } else if (sortBy === 'Exit time') {
+      const timeA = a.exit_time || '00:00:00';
+      const timeB = b.exit_time || '00:00:00';
+      compareValue = timeA.localeCompare(timeB);
+    } else if (sortBy === 'P/L') {
+      const pnlA = parseFloat(a.pnl || a.total_pnl || 0);
+      const pnlB = parseFloat(b.pnl || b.total_pnl || 0);
+      compareValue = pnlA - pnlB;
+    }
+    
+    // Apply sort order (ASC or DESC)
+    return sortOrder === 'ASC' ? compareValue : -compareValue;
+  });
   
   // Pagination logic
   const indexOfLastTrade = currentPage * tradesPerPage;
   const indexOfFirstTrade = indexOfLastTrade - tradesPerPage;
-  const currentTrades = allTrades.slice(indexOfFirstTrade, indexOfLastTrade);
-  const totalPages = Math.ceil(allTrades.length / tradesPerPage);
+  const currentTrades = sortedTrades.slice(indexOfFirstTrade, indexOfLastTrade);
+  const totalPages = Math.ceil(sortedTrades.length / tradesPerPage);
 
   const formatCurrency = (value) => {
     const num = parseFloat(value) || 0;
@@ -341,9 +367,6 @@ const PortfolioBacktestResults = ({
 
   return (
     <div className="space-y-6 mt-6">
-      {/* Separator line */}
-      <div className="border-t-4 border-blue-500 my-8"></div>
-
       {/* Show message if no trade data */}
       {allTrades.length === 0 && (
         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
@@ -370,13 +393,13 @@ const PortfolioBacktestResults = ({
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-xl font-bold text-gray-900 mb-2">BACKTEST RESULT</h2>
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-2 ignore-pdf">
               <input type="checkbox" id="include-previous" className="w-4 h-4" />
               <label htmlFor="include-previous" className="text-sm text-gray-600">
                 Include data from previous regime
               </label>
             </div>
-            <p className="text-xs text-orange-600">
+            <p className="text-xs text-orange-600 ignore-pdf">
               Following results are backtested results on historical data. These historical simulations do not represent actual trading and have not been executed in the live market. <button className="text-blue-600 hover:underline">Know more</button>
             </p>
           </div>
@@ -764,16 +787,31 @@ const PortfolioBacktestResults = ({
             >
               <option>Entry date</option>
               <option>Exit date</option>
+              <option>Exit time</option>
               <option>P/L</option>
             </select>
-            <button className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+            <button 
+              onClick={() => setSortOrder('ASC')}
+              className={`px-3 py-1 rounded text-sm ${
+                sortOrder === 'ASC' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
               Asc
             </button>
-            <button className="px-3 py-1 border border-gray-300 rounded text-sm hover:bg-gray-50">
+            <button 
+              onClick={() => setSortOrder('DESC')}
+              className={`px-3 py-1 rounded text-sm ${
+                sortOrder === 'DESC' 
+                  ? 'bg-blue-600 text-white' 
+                  : 'border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
               Desc
             </button>
             <span className="text-sm text-gray-600">
-              Showing {indexOfFirstTrade + 1} - {Math.min(indexOfLastTrade, allTrades.length)} trades out of {allTrades.length}
+              Showing {indexOfFirstTrade + 1} - {Math.min(indexOfLastTrade, sortedTrades.length)} trades out of {sortedTrades.length}
             </span>
           </div>
         </div>

@@ -75,7 +75,6 @@ const TWSStylePositionsTable = ({ positions, darkMode = false }) => {
     );
   }
 
-  // Calculate totals
   const totals = positions.reduce((acc, pos) => {
     acc.marketValue += (pos.current_price || 0) * (pos.quantity || 0) * (pos.multiplier || 100);
     acc.costBasis += (pos.entry_price || 0) * (pos.quantity || 0) * (pos.multiplier || 100);

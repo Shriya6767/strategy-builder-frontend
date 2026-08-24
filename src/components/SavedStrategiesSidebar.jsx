@@ -17,7 +17,7 @@ const SavedStrategiesSidebar = ({ isOpen, onToggle, onLoadStrategy, onDeleteStra
         setStrategies(data.strategies || []);
       }
     } catch (error) {
-      console.error('Error fetching strategies:', error);
+      logger.error('Error fetching strategies:', error);
     } finally {
       setLoading(false);
     }
@@ -31,7 +31,6 @@ const SavedStrategiesSidebar = ({ isOpen, onToggle, onLoadStrategy, onDeleteStra
     items.splice(result.destination.index, 0, reorderedItem);
 
     setStrategies(items);
-    // Optionally save order to backend
   };
 
   useEffect(() => {
@@ -49,7 +48,7 @@ const SavedStrategiesSidebar = ({ isOpen, onToggle, onLoadStrategy, onDeleteStra
       await onDeleteStrategy(strategyId);
       fetchStrategies(); // Refresh list
     } catch (error) {
-      console.error('Delete error:', error);
+      logger.error('Delete error:', error);
       alert('Failed to delete strategy');
     }
   };
@@ -97,6 +96,7 @@ const SavedStrategiesSidebar = ({ isOpen, onToggle, onLoadStrategy, onDeleteStra
         
         @keyframes fadeInOverlay {
           from {
+import logger from '../utils/logger';
             opacity: 0;
           }
           to {

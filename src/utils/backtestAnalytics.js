@@ -1,24 +1,3 @@
-// Derives every number the Backtest Results screen needs directly from the
-// raw backend response shape:
-//
-//   {
-//     success, message,
-//     data: [
-//       {
-//         trade_date: "2022-06-01",
-//         entry_datetime: "...",
-//         legs: [ { leg, position, option, ticker, strike, moneyness,
-//                   distance_from_underlying, entry_datetime, entry_price,
-//                   underlying_entry_price, status, target_price,
-//                   stoploss_price, exit_datetime, exit_price, exit_reason,
-//                   pnl, is_reentry, reentry_mode }, ... ],
-//         overall_exits: [ { cycle, exit_datetime, exit_reason, combined_pnl } ]
-//       }, ...
-//     ]
-//   }
-//
-// The backend does NOT send summary / monthly_stats / cumulative_data /
-// drawdown_data — those are all computed here from the leg-level P/L.
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 
@@ -30,7 +9,6 @@ export function flattenTrades(apiData) {
       trades.push({ ...leg, trade_date: record.trade_date, record_index: recordIndex });
     });
   });
-  // Chronological order (handles reentries firing later the same day correctly).
   trades.sort((a, b) => new Date(a.entry_datetime) - new Date(b.entry_datetime));
   return trades;
 }
@@ -67,7 +45,6 @@ function buildEquityCurve(apiData) {
     .map((record) => {
       const legs = record.legs || [];
       const dayPnl = legs.reduce((s, l) => s + (l.pnl || 0), 0);
-      // Underlying reference point for the day: the first leg's entry underlying price.
       const underlying = legs.length ? legs[0].underlying_entry_price ?? null : null;
       return { date: record.trade_date, pnl: dayPnl, underlying };
     })
@@ -117,9 +94,6 @@ function buildMonthlyStats(dayRows, drawdownData) {
     bucket.total = round2(bucket.total + row.pnl);
   });
 
-  // Attribute the globally-computed drawdown series to the year each trough falls in,
-  // keeping the worst (most negative) drawdown seen in that year and the peak date it
-  // fell from — mirrors "Max Drawdown" / "Days for MDD" columns.
   drawdownData.forEach((d) => {
     const year = new Date(d.date).getFullYear();
     const bucket = byYear[year];

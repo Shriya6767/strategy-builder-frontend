@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ArrowLeft,
   ChevronsLeft,
@@ -15,6 +15,7 @@ import {
   Check,
   Plus,
   X,
+  FileDown,
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -27,6 +28,9 @@ import {
 } from 'recharts';
 import { API_URL } from '../services/api';
 import PortfolioBacktestResults from './PortfolioBacktestResults';
+import logger from '../utils/logger';
+import StrategyRow from './StrategyRow';
+import { generatePortfolioScreenshotPDF } from '../utils/portfolioScreenshotPdf';
 
 const WEEKDAYS = [
   { key: 'mon', label: 'M' },
@@ -62,19 +66,11 @@ const PillDropdown = ({ value, options, onChange, className = '' }) => (
   </div>
 );
 
-// `onApply` is called with the raw numeric multiplier the user typed & confirmed
-// (in addition to `onChange`, which just tracks the display label "Nx").
-// The parent uses `onApply` to push that number down into every strategy row's Qty field.
 const QtyMultiplierDropdown = ({ value, onChange, onApply, className = '' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [inputValue, setInputValue] = useState('1');
   const dropdownRef = useRef(null);
 
-  // FIX: re-sync the input from the currently-applied `value` every time the
-  // popup opens. Previously this only ran once on mount (useState('1')), so
-  // reopening the popup after applying e.g. "4x" would still show "1" in the
-  // input even though the pill correctly showed "4x" — looked like the value
-  // never saved.
   useEffect(() => {
     if (isOpen) {
       const match = /^(\d+)x$/.exec(value);
@@ -151,10 +147,6 @@ const SlippageDropdown = ({ value, onChange, onApply, className = '' }) => {
   const [inputValue, setInputValue] = useState('0');
   const dropdownRef = useRef(null);
 
-  // FIX: same issue as QtyMultiplierDropdown above. `inputValue` was only
-  // ever initialized once via useState('0') and never updated after Apply,
-  // so reopening the popup showed "0" even after you'd applied e.g. "5%".
-  // Re-derive it from `value` every time the popup opens.
   useEffect(() => {
     if (isOpen) {
       const match = /^(-?\d+(\.\d+)?)%$/.exec(value);
@@ -227,11 +219,6 @@ const SlippageDropdown = ({ value, onChange, onApply, className = '' }) => {
   );
 };
 
-// Popup used when the Overall Portfolio Setting tab-group is on "DTE".
-// Mirrors QtyMultiplierDropdown/SlippageDropdown: shows a "Days to expiry"
-// select + Apply button (matches the first screenshot), instead of the plain
-// DTE/Weekdays/Budget Days option list (second screenshot) that a generic
-// PillDropdown would show.
 const DTEDropdown = ({ onApply, className = '' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [inputValue, setInputValue] = useState('0');
@@ -296,10 +283,6 @@ const DTEDropdown = ({ onApply, className = '' }) => {
   );
 };
 
-// Popup used when the Overall Portfolio Setting tab-group is on "Weekdays".
-// Mirrors DTEDropdown: shows toggleable M/T/W/Th/F/Sa/Su circles + Apply
-// button (matches the first screenshot), instead of the plain
-// DTE/Weekdays/Budget Days option list (second screenshot).
 const WeekdaysDropdown = ({ onApply, className = '' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedDays, setSelectedDays] = useState({ ...ALL_WEEKDAYS_ON });
@@ -370,9 +353,6 @@ const WeekdaysDropdown = ({ onApply, className = '' }) => {
   );
 };
 
-// Popup used when the Overall Portfolio Setting tab-group is on "Budget Days".
-// Mirrors WeekdaysDropdown/DTEDropdown: a checklist of budget-day options +
-// Apply button, instead of the plain DTE/Weekdays/Budget Days option list.
 const BudgetDaysDropdown = ({ onApply, className = '' }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [selected, setSelected] = useState([]);
@@ -542,11 +522,6 @@ const BudgetDaysMultiSelect = ({ selectedBudgetDays = [], onChange, className = 
 const Portfolio = ({
   portfolioId,
   portfolioName: initialName = 'My Portfolio',
-  // The list of strategies the user actually picked when creating this
-  // portfolio (passed down from Portfolios.jsx). When present, this is the
-  // source of truth for the rows — we don't fetch or fall back to
-  // localStorage/sample data at all. Only fetch/fallback when the caller
-  // doesn't supply this (e.g. this component used standalone).
   strategies: strategiesProp,
   onBack,
   onDeletePortfolio,
@@ -556,7 +531,6 @@ const Portfolio = ({
   onRecentBacktests,
   creditsAvailable = 0,
   backtestsRemaining = 25,
-  // Accept saved dates from parent
   startDate: savedStartDate,
   endDate: savedEndDate,
 }) => {
@@ -564,16 +538,19 @@ const Portfolio = ({
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(initialName);
 
-  // Save as new modal state
   const [showSaveAsNewModal, setShowSaveAsNewModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editModalName, setEditModalName] = useState(initialName);
+  const [allSavedStrategies, setAllSavedStrategies] = useState([]);
+  const [saveAsNewName, setSaveAsNewName] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
 
-  // Backtest results state (shown inline below the settings)
   const [backtestResults, setBacktestResults] = useState(null);
   const [backtestLoading, setBacktestLoading] = useState(false);
   const [backtestError, setBacktestError] = useState(null);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const [scopeFilter, setScopeFilter] = useState('All');
   const [qtyMultiplier, setQtyMultiplier] = useState('Qty Multiplier');
@@ -584,7 +561,6 @@ const Portfolio = ({
   const lastYear = new Date();
   lastYear.setFullYear(today.getFullYear() - 1);
   
-  // Initialize dates from saved portfolio data if available, otherwise use defaults
   const [startDate, setStartDate] = useState(savedStartDate || toInputDate(lastYear));
   const [endDate, setEndDate] = useState(savedEndDate || toInputDate(today));
 
@@ -595,7 +571,6 @@ const Portfolio = ({
     let cancelled = false;
 
     const buildRow = (s, idx) => {
-      console.log(`🔧 Building row ${idx} from strategy:`, s);
       const row = {
         id: s.id ?? s.strategy_id ?? `strategy_${idx}`,
         name: s.name ?? s.strategy_name ?? 'Untitled Strategy',
@@ -609,18 +584,11 @@ const Portfolio = ({
         selectedDTEs: s.selectedDTEs ?? [0],
         selectedBudgetDays: s.selectedBudgetDays ?? [],
       };
-      console.log(`✅ Built row ${idx}:`, row);
       return row;
     };
 
-    // If the parent explicitly told us which strategies belong in this
-    // portfolio, use exactly that list and skip fetching entirely — this is
-    // what makes "I selected 4 strategies" actually show 4 rows instead of
-    // whatever happened to be sitting in the API/localStorage/sample data.
     if (Array.isArray(strategiesProp)) {
-      console.log('📥 PortfolioDetails received strategiesProp:', strategiesProp);
       const builtRows = strategiesProp.map(buildRow);
-      console.log('✅ Final built rows:', builtRows);
       setRows(builtRows);
       setLoading(false);
       return () => {
@@ -633,7 +601,6 @@ const Portfolio = ({
         const local = JSON.parse(localStorage.getItem('saved_strategies_cards') || '[]');
         if (local.length > 0) return local.map(buildRow);
       } catch (e) {
-        // ignore
       }
       return [
         {
@@ -674,7 +641,6 @@ const Portfolio = ({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategiesProp]);
 
   const selectedCount = rows.filter((r) => r.selected).length;
@@ -684,36 +650,30 @@ const Portfolio = ({
     setRows((prev) => prev.map((r) => ({ ...r, selected: !allSelected })));
   };
 
-  const toggleRowSelected = (id) => {
+  const toggleRowSelected = useCallback((id) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, selected: !r.selected } : r)));
-  };
+  }, []);
 
   const deleteSelected = () => {
     setRows((prev) => prev.filter((r) => !r.selected));
   };
 
-  // Deletes a single row via the per-row trash icon (independent of the
-  // checkbox/"Delete Selected" bulk action above).
-  const deleteRow = (id) => {
+  const deleteRow = useCallback((id) => {
     setRows((prev) => prev.filter((r) => r.id !== id));
-  };
+  }, []);
 
-  const updateRow = (id, patch) => {
+  const updateRow = useCallback((id, patch) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  };
+  }, []);
 
-  const toggleRowWeekday = (id, dayKey) => {
+  const toggleRowWeekday = useCallback((id, dayKey) => {
     setRows((prev) =>
       prev.map((r) =>
         r.id === id ? { ...r, weekdays: { ...r.weekdays, [dayKey]: !r.weekdays[dayKey] } } : r
       )
     );
-  };
+  }, []);
 
-  // Fires when the Overall Portfolio Setting "Qty Multiplier" popup is applied.
-  // Pushes the typed number down into every (or every *selected*, depending on
-  // Scope) strategy row's Qty field — this is what makes the row dropdown show
-  // "4" after typing 4 and hitting Apply at the top, per the screenshots.
   const applyQtyMultiplier = (multiplier) => {
     setRows((prev) =>
       prev.map((r) => {
@@ -723,10 +683,6 @@ const Portfolio = ({
     );
   };
 
-  // Fires when the Overall Portfolio Setting "Slippage" popup is applied.
-  // Pushes the typed slippage % down into every (or every *selected*)
-  // strategy row's budget field, same pattern as applyQtyMultiplier above —
-  // this is what makes each row show "2 %" after typing 2 and hitting Apply.
   const applySlippageToRows = (slippageValue) => {
     setRows((prev) =>
       prev.map((r) => {
@@ -736,9 +692,6 @@ const Portfolio = ({
     );
   };
 
-  // Fires when the Overall Portfolio Setting "DTE" popup is applied.
-  // Pushes the chosen DTE down into every (or every *selected*) strategy
-  // row's DTE selection, same pattern as applyQtyMultiplier above.
   const applyDTEToRows = (dte) => {
     setRows((prev) =>
       prev.map((r) => {
@@ -748,9 +701,6 @@ const Portfolio = ({
     );
   };
 
-  // Fires when the Overall Portfolio Setting "Weekdays" popup is applied.
-  // Pushes the chosen weekday set down into every (or every *selected*)
-  // strategy row's weekdays, same pattern as applyDTEToRows above.
   const applyWeekdaysToRows = (selectedDays) => {
     setRows((prev) =>
       prev.map((r) => {
@@ -760,7 +710,6 @@ const Portfolio = ({
     );
   };
 
-  // Fires when the Overall Portfolio Setting "Budget Days" popup is applied.
   const applyBudgetDaysToRows = (selectedBudgetDays) => {
     setRows((prev) =>
       prev.map((r) => {
@@ -770,14 +719,16 @@ const Portfolio = ({
     );
   };
 
-  const handleDragStart = (index) => (e) => {
+  const handleDragStart = useCallback((index) => (e) => {
     dragIndex.current = index;
     e.dataTransfer.effectAllowed = 'move';
-  };
-  const handleDragOver = (index) => (e) => {
+  }, []);
+  
+  const handleDragOver = useCallback((index) => (e) => {
     e.preventDefault();
-  };
-  const handleDrop = (index) => (e) => {
+  }, []);
+  
+  const handleDrop = useCallback((index) => (e) => {
     e.preventDefault();
     const from = dragIndex.current;
     if (from === null || from === index) return;
@@ -788,7 +739,7 @@ const Portfolio = ({
       return next;
     });
     dragIndex.current = null;
-  };
+  }, []);
 
   const buildPortfolioPayload = () => ({
     id: portfolioId,
@@ -813,14 +764,13 @@ const Portfolio = ({
   };
 
   const handleSaveAsNew = () => {
+    setSaveAsNewName(`${portfolioName} (copy)`);
     setShowSaveAsNewModal(true);
   };
 
   const handleConfirmSaveAsNew = () => {
-    // Auto-generate name: original name + " (copy)"
-    const newName = `${portfolioName} (copy)`;
+    const newName = saveAsNewName.trim() || `${portfolioName} (copy)`;
     
-    // Only include SELECTED strategies (checked ones)
     const selectedStrategies = rows.filter(row => row.selected);
     
     if (selectedStrategies.length === 0) {
@@ -838,71 +788,83 @@ const Portfolio = ({
     flashSaved();
   };
 
+  const handleConfirmEdit = () => {
+    if (rows.length === 0) {
+      alert('Please select at least one strategy');
+      return;
+    }
+    
+    const updatedName = editModalName.trim() || portfolioName;
+    
+    const payload = {
+      id: portfolioId,
+      name: updatedName,
+      scopeFilter,
+      qtyMultiplier,
+      dteTab,
+      slippage,
+      startDate,
+      endDate,
+      strategies: rows  // All rows are the selected strategies
+    };
+    
+    // Update the portfolio name
+    setPortfolioName(updatedName);
+    
+    // Call the update handler
+    onUpdatePortfolio?.(payload);
+    
+    setShowEditModal(false);
+    flashSaved();
+  };
+
   const handleBacktest = async () => {
     setBacktestLoading(true);
     setBacktestError(null);
     setBacktestResults(null);
 
     try {
-      // Filter only selected rows
       const selectedRows = rows.filter(row => row.selected);
       
       if (selectedRows.length === 0) {
         throw new Error('Please select at least one strategy');
       }
 
-      console.log('🔍 Debug - Selected rows before processing:', selectedRows.map(r => ({
-        id: r.id,
-        type: typeof r.id,
-        name: r.name,
-        selected: r.selected
-      })));
 
-      // Load saved strategies from localStorage to get their original date ranges
       let savedStrategies = [];
       try {
         savedStrategies = JSON.parse(localStorage.getItem('saved_strategies_cards') || '[]');
-        console.log('📅 Loaded saved strategies with dates:', savedStrategies);
-        console.log('📅 First strategy structure:', savedStrategies[0]);
-        console.log('📅 Available fields in first strategy:', savedStrategies[0] ? Object.keys(savedStrategies[0]) : 'No strategies');
       } catch (e) {
-        console.warn('Could not load saved strategies from localStorage:', e);
       }
 
-      // Build the payload in the format the API expects
       const payload = {
         portfolio_id: portfolioId,
         aggregate_at_eod: true,
-        // Portfolio-level dates - these will be used for ALL strategies
         start_date: startDate,
         end_date: endDate,
         strategy_overrides: selectedRows.map(row => {
-          console.log(`📦 Processing strategy "${row.name}" (id: ${row.id})`);
 
-          // Parse strategy_id properly
           let strategyId;
           if (typeof row.id === 'number') {
             strategyId = row.id;
           } else if (typeof row.id === 'string') {
-            // Try to extract number from string like "strategy_0" or "48"
             const match = row.id.match(/\d+/);
             strategyId = match ? parseInt(match[0]) : null;
           }
 
           if (!strategyId || isNaN(strategyId)) {
-            console.error('❌ Invalid strategy_id for row:', row);
+            logger.error('❌ Invalid strategy_id for row:', row);
             throw new Error(`Invalid strategy ID for "${row.name}": ${row.id}`);
           }
 
-          // Determine period_selection based on dteTab
           let period_selection;
           if (dteTab === 'DTE') {
+            // Use array format: [0, 1, 2, etc.]
             period_selection = {
               mode: 'dte',
               dte_selected: row.selectedDTEs || [0]
             };
           } else if (dteTab === 'Weekdays') {
-            // Convert weekdays object to array of selected day abbreviations
             const weekdayMap = {
               mon: 'M', tue: 'T', wed: 'W', thu: 'Th', 
               fri: 'F', sat: 'Sa', sun: 'Su'
@@ -916,35 +878,25 @@ const Portfolio = ({
               mode: 'weekdays',
               weekdays_selected
             };
-          } else {
-            // Budget Days mode
-            period_selection = {
-              mode: 'budget_days',
-              budget_days_selected: row.selectedBudgetDays || []
-            };
           }
 
-          // ⭐ ALWAYS use portfolio dates for all strategies
-          console.log(`📅 Using portfolio dates for strategy "${row.name}": ${startDate} to ${endDate}`);
-          
-          const strategyOverride = {
+          // Return with strategy_name included (as shown in correct format)
+          return {
             strategy_id: strategyId,
             strategy_name: row.name || 'Untitled',
-            version: row.version || 1,
+            version: row.version || 2,
             qty_multiplier: row.qty || 1,
             slippage_percent: row.budgetPct || 0,
-            period_selection,
-            start_date: startDate,  // ⭐ Use portfolio start date
-            end_date: endDate       // ⭐ Use portfolio end date
+            period_selection
           };
-
-          console.log(`📦 Final strategy override for "${row.name}":`, strategyOverride);
-          
-          return strategyOverride;
         })
       };
 
-      console.log('🚀 Running portfolio backtest with payload:', JSON.stringify(payload, null, 2));
+      logger.request('[RUN PORTFOLIO BACKTEST] Request', {
+        method: 'POST',
+        url: `${API_URL}/run-portfolio-backtest`,
+        body: payload
+      });
 
       const response = await fetch(`${API_URL}/run-portfolio-backtest`, {
         method: 'POST',
@@ -954,16 +906,18 @@ const Portfolio = ({
 
       const data = await response.json();
 
+      logger.response('[RUN PORTFOLIO BACKTEST] Response', {
+        status: response.status,
+        data: data
+      });
+
       if (!response.ok) {
         throw new Error(data.detail || data.message || `HTTP ${response.status}`);
       }
 
-      // ⭐ Transform backend response: Convert option types to lowercase for display
-      console.log('🔧 [TRANSFORM] Original data received from backend:', data);
       const transformedData = {
         ...data,
         strategies: (data.strategies || []).map(strategy => {
-          console.log(`🔧 [TRANSFORM] Processing strategy: ${strategy.strategy_name}`);
           return {
             ...strategy,
             trade_results: (strategy.trade_results || []).map(trade => ({
@@ -972,7 +926,6 @@ const Portfolio = ({
                 const originalOption = leg.option;
                 const transformedOption = leg.option ? leg.option.toLowerCase() : leg.option;
                 if (originalOption !== transformedOption) {
-                  console.log(`🔧 [TRANSFORM] Converted: ${originalOption} → ${transformedOption}`);
                 }
                 return {
                   ...leg,
@@ -983,16 +936,11 @@ const Portfolio = ({
           };
         })
       };
-      console.log('🔧 [TRANSFORM] Transformed data:', transformedData);
 
-      console.log('✅ Backtest results received:', transformedData);
-      console.log('📊 Data keys:', Object.keys(transformedData));
-      console.log('📊 Data.data keys:', transformedData.data ? Object.keys(transformedData.data) : 'No data.data');
-      console.log('📊 Full response structure:', JSON.stringify(transformedData, null, 2));
       setBacktestResults(transformedData);
 
     } catch (error) {
-      console.error('❌ Error running backtest:', error);
+      logger.error('❌ Error running backtest:', error);
       setBacktestError(error.message);
     } finally {
       setBacktestLoading(false);
@@ -1008,7 +956,6 @@ const Portfolio = ({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, portfolioName, scopeFilter, qtyMultiplier, dteTab, slippage, startDate, endDate]);
 
   const handleExport = () => {
@@ -1025,16 +972,42 @@ const Portfolio = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleGeneratePDF = async () => {
+    if (!backtestResults) {
+      alert('Please run a backtest first before generating PDF');
+      return;
+    }
+    
+    try {
+      setIsGeneratingPDF(true);
+      await generatePortfolioScreenshotPDF(portfolioName || 'Portfolio');
+      // Success - PDF downloaded automatically
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF. Please try again.');
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
   const handleDeletePortfolio = async () => {
     if (!window.confirm(`Delete portfolio "${portfolioName}"? This cannot be undone.`)) {
       return;
     }
 
     try {
+      const payload = { portfolio_id: portfolioId };
+      
+      logger.request('[DELETE PORTFOLIO] Request', {
+        method: 'POST',
+        url: `${API_URL}/delete-portfolio`,
+        body: payload
+      });
+      
       const response = await fetch(`${API_URL}/delete-portfolio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portfolio_id: portfolioId })
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
@@ -1042,12 +1015,16 @@ const Portfolio = ({
       }
 
       const data = await response.json();
-      console.log('✅ Portfolio deleted:', data);
       
-      // Call the parent's callback to update UI and navigate back
+      logger.response('[DELETE PORTFOLIO] Response', {
+        status: response.status,
+        data: data
+      });
+      logger.success('Portfolio deleted successfully');
+      
       onDeletePortfolio?.(portfolioId);
     } catch (error) {
-      console.error('❌ Error deleting portfolio:', error);
+      logger.error('Error deleting portfolio:', error);
       alert('Failed to delete portfolio. Please try again.');
     }
   };
@@ -1093,6 +1070,20 @@ const Portfolio = ({
 
           <div className="hidden sm:flex items-center gap-2 ml-4">
             <button
+              onClick={handleGeneratePDF}
+              disabled={isGeneratingPDF || !backtestResults}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                isGeneratingPDF || !backtestResults
+                  ? 'text-gray-400 bg-gray-100 cursor-not-allowed'
+                  : 'text-blue-600 hover:bg-blue-50 border border-blue-200'
+              }`}
+              type="button"
+              title={!backtestResults ? 'Run a backtest first' : 'Generate PDF report'}
+            >
+              <FileDown size={15} />
+              {isGeneratingPDF ? 'Generating...' : 'PDF'}
+            </button>
+            <button
               onClick={handleExport}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               type="button"
@@ -1102,8 +1093,16 @@ const Portfolio = ({
             </button>
             <button
               onClick={() => {
-                setNameDraft(portfolioName);
-                setEditingName(true);
+                // Load all saved strategies from localStorage
+                try {
+                  const savedStrategies = JSON.parse(localStorage.getItem('saved_strategies_cards') || '[]');
+                  setAllSavedStrategies(savedStrategies);
+                } catch (e) {
+                  console.error('Failed to load saved strategies:', e);
+                  setAllSavedStrategies([]);
+                }
+                setEditModalName(portfolioName);
+                setShowEditModal(true);
               }}
               className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               type="button"
@@ -1145,7 +1144,7 @@ const Portfolio = ({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 bg-gray-50">
+      <div id="portfolio-pdf-content" className="flex-1 overflow-y-auto px-6 py-6 bg-gray-50">
         {/* Portfolio configuration section - Always visible */}
         <div>
           <h2 className="text-sm font-medium text-gray-800 mb-3">Overall Portfolio Setting</h2>
@@ -1170,7 +1169,7 @@ const Portfolio = ({
 
             <div className="flex items-center gap-3 ml-12">
               <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden text-sm bg-white">
-                {['DTE', 'Weekdays', 'Budget Days'].map((tab) => (
+                {['DTE', 'Weekdays'].map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -1191,30 +1190,18 @@ const Portfolio = ({
                   that just repeats DTE/Weekdays/Budget Days (screenshot 2). */}
               {dteTab === 'DTE' ? (
                 <DTEDropdown onApply={applyDTEToRows} className="w-32" />
-              ) : dteTab === 'Weekdays' ? (
-                <WeekdaysDropdown onApply={applyWeekdaysToRows} className="w-32" />
               ) : (
-                <BudgetDaysDropdown onApply={applyBudgetDaysToRows} className="w-32" />
+                <WeekdaysDropdown onApply={applyWeekdaysToRows} className="w-32" />
               )}
             </div>
 
-            <div className="shrink-0 ml-2 flex flex-col gap-1">
-              <label className="text-xs text-gray-600">Slippage</label>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={slippage === 'Slippage' ? '0' : slippage.replace('%', '')}
-                  onChange={(e) => {
-                    const val = parseFloat(e.target.value) || 0;
-                    setSlippage(`${val}%`);
-                    applySlippageToRows(val);
-                  }}
-                  className="w-16 px-2 py-1.5 border border-gray-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
-                />
-                <span className="text-sm text-gray-500">%</span>
-              </div>
+            <div className="shrink-0 ml-2">
+              <SlippageDropdown
+                value={slippage}
+                onChange={setSlippage}
+                onApply={applySlippageToRows}
+                className="w-32"
+              />
             </div>
           </div>
         </div>
@@ -1253,120 +1240,22 @@ const Portfolio = ({
               No strategies in this portfolio yet.
             </div>
           ) : (
-            rows.map((row, idx) => {
-              // Keep the row Qty select's option list in sync with whatever value
-              // the multiplier applied — including numbers outside the default
-              // 1/2/3/4/5/10 preset (e.g. someone types 7 into the multiplier).
-              const qtyOptions = Array.from(
-                new Set(['1', '2', '3', '4', '5', '10', String(row.qty)])
-              );
-
-              return (
-                <div
-                  key={row.id}
-                  draggable
-                  onDragStart={handleDragStart(idx)}
-                  onDragOver={handleDragOver(idx)}
-                  onDrop={handleDrop(idx)}
-                  className="flex items-center gap-12 px-6 py-5 flex-wrap lg:flex-nowrap hover:bg-gray-50/60 transition-colors min-h-[72px]"
-                >
-                  <button
-                    className="text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing shrink-0"
-                    title="Drag to reorder"
-                    type="button"
-                  >
-                    <GripVertical size={18} />
-                  </button>
-
-                  <input
-                    type="checkbox"
-                    checked={row.selected}
-                    onChange={() => toggleRowSelected(row.id)}
-                    className="w-4 h-4 rounded accent-blue-600 cursor-pointer shrink-0"
-                  />
-
-                  <div className="min-w-[10rem] mr-23">
-                    <p className="font-medium text-gray-900">{row.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {row.symbol} <span className="mx-1">•</span> {row.strategy_type}
-                    </p>
-                  </div>
-
-                  <div className="w-32 shrink-0">
-                    <PillDropdown
-                      value={String(row.qty)}
-                      onChange={(v) => updateRow(row.id, { qty: Number(v) })}
-                      options={qtyOptions}
-                      className="w-full"
-                    />
-                  </div>
-
-                  {dteTab === 'Weekdays' && (
-                    <div className="flex-1 flex items-center justify-center gap-3 shrink-0 px-4 ml-6">
-                      {WEEKDAYS.map((d) => {
-                        const active = row.weekdays[d.key];
-                        return (
-                          <button
-                            key={d.key}
-                            type="button"
-                            onClick={() => toggleRowWeekday(row.id, d.key)}
-                            className={`w-9 h-9 rounded-full text-xs font-medium border transition-colors ${
-                              active
-                                ? 'bg-blue-50 border-blue-400 text-blue-600'
-                                : 'bg-white border-gray-200 text-gray-400 hover:border-gray-300'
-                            }`}
-                          >
-                            {d.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {dteTab === 'DTE' && (
-                    <div className="flex-1 flex justify-center">
-                      {/* Single-value dropdown per row, same pattern as the
-                          Qty column, instead of a multi-select checklist. */}
-                      <PillDropdown
-                        value={String(row.selectedDTEs?.[0] ?? 0)}
-                        onChange={(v) => updateRow(row.id, { selectedDTEs: [Number(v)] })}
-                        options={Array.from({ length: 81 }, (_, i) => String(i))}
-                        className="w-36 shrink-0"
-                      />
-                    </div>
-                  )}
-
-                  {dteTab === 'Budget Days' && (
-                    <div className="flex-1 flex justify-center">
-                      <BudgetDaysMultiSelect
-                        selectedBudgetDays={row.selectedBudgetDays || []}
-                        onChange={(newBudgetDays) => updateRow(row.id, { selectedBudgetDays: newBudgetDays })}
-                        className="w-44 shrink-0"
-                      />
-                    </div>
-                  )}
-
-                  <div className="w-24 shrink-0 flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      value={row.budgetPct}
-                      onChange={(e) => updateRow(row.id, { budgetPct: Number(e.target.value) })}
-                      className="w-16 px-3 py-2 border border-gray-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 h-[38px]"
-                    />
-                    <span className="text-sm text-gray-500 flex items-center h-[38px]">%</span>
-                  </div>
-
-                  <button
-                    onClick={() => deleteRow(row.id)}
-                    className="text-red-500 hover:text-red-700 transition-colors shrink-0"
-                    title="Delete this strategy"
-                    type="button"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              );
-            })
+            rows.map((row, idx) => (
+              <StrategyRow
+                key={row.id}
+                row={row}
+                idx={idx}
+                dteTab={dteTab}
+                PillDropdown={PillDropdown}
+                onUpdateRow={updateRow}
+                onToggleSelected={toggleRowSelected}
+                onToggleWeekday={toggleRowWeekday}
+                onDelete={deleteRow}
+                onDragStart={handleDragStart(idx)}
+                onDragOver={handleDragOver(idx)}
+                onDrop={handleDrop(idx)}
+              />
+            ))
           )}
         </div>
 
@@ -1383,6 +1272,8 @@ const Portfolio = ({
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
+                lang="en-GB"
+                placeholder="dd/mm/yyyy"
                 className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
               />
             </div>
@@ -1395,6 +1286,8 @@ const Portfolio = ({
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
+                lang="en-GB"
+                placeholder="dd/mm/yyyy"
                 className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
               />
             </div>
@@ -1520,7 +1413,7 @@ const Portfolio = ({
           <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4">
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h2 className="text-xl font-semibold text-gray-800">Create portfolio: {portfolioName} (copy) (copy)</h2>
+              <h2 className="text-xl font-semibold text-gray-800">Create New Portfolio</h2>
               <button
                 onClick={() => setShowSaveAsNewModal(false)}
                 className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -1538,9 +1431,10 @@ const Portfolio = ({
                 </label>
                 <input
                   type="text"
-                  value={`${portfolioName} (copy) (copy)`}
-                  readOnly
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
+                  value={saveAsNewName}
+                  onChange={(e) => setSaveAsNewName(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  placeholder="Enter portfolio name"
                 />
               </div>
 
@@ -1548,9 +1442,6 @@ const Portfolio = ({
               <div className="mb-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-gray-700">Add Strategy</h3>
-                  <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
-                    + New Strategy
-                  </button>
                 </div>
 
                 {/* Tab - My Strategies */}
@@ -1630,6 +1521,182 @@ const Portfolio = ({
                 className="px-6 py-2 rounded-lg font-medium transition-all bg-blue-700 text-white hover:bg-blue-800 active:scale-95 cursor-pointer shadow-sm"
               >
                 Create Portfolio
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Portfolio Modal */}
+      {showEditModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-3xl mx-4">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-800">Edit Portfolio</h2>
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-4">
+              {/* Portfolio Name Input */}
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Portfolio Name
+                </label>
+                <input
+                  type="text"
+                  value={editModalName}
+                  onChange={(e) => setEditModalName(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                  placeholder="Enter portfolio name"
+                />
+              </div>
+
+              {/* Add Strategy Section */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-700">Select Strategies</h3>
+                </div>
+
+                {/* Tab - My Strategies */}
+                <div className="border-b border-gray-200 mb-4">
+                  <button className="px-4 py-2 text-sm font-medium text-blue-600 relative">
+                    My Strategies
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+                  </button>
+                </div>
+
+                {/* Search Input */}
+                <div className="relative mb-4">
+                  <input
+                    type="text"
+                    placeholder="Search Strategy"
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+                  />
+                  <svg className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <path d="m21 21-4.35-4.35"></path>
+                  </svg>
+                </div>
+
+                {/* Select All Checkbox */}
+                <div className="flex items-center gap-2 mb-3 pb-3 border-b border-gray-200">
+                  <input
+                    type="checkbox"
+                    id="select-all-edit-modal"
+                    checked={allSavedStrategies.length > 0 && allSavedStrategies.every(strategy => 
+                      rows.some(row => row.name === strategy.name)
+                    )}
+                    onChange={() => {
+                      const allSelected = allSavedStrategies.every(strategy => 
+                        rows.some(row => row.name === strategy.name)
+                      );
+                      
+                      if (allSelected) {
+                        // Deselect all - clear the rows
+                        setRows([]);
+                      } else {
+                        // Select all - add all strategies that aren't already in rows
+                        const newRows = allSavedStrategies.map(strategy => {
+                          const existingRow = rows.find(row => row.name === strategy.name);
+                          if (existingRow) {
+                            return existingRow;
+                          }
+                          return {
+                            id: strategy.id || `temp-${Date.now()}-${strategy.name}`,
+                            name: strategy.name,
+                            qty: 1,
+                            dte: 'DTE',
+                            selectedDTEs: [0],
+                            weekdays: { mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false },
+                            budgetDays: 'Budget Days',
+                            selectedBudgetDays: [],
+                            slippage: '0%',
+                            selected: true
+                          };
+                        });
+                        setRows(newRows);
+                      }
+                    }}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                  />
+                  <label htmlFor="select-all-edit-modal" className="text-sm font-medium text-gray-700 cursor-pointer">
+                    Select all ({allSavedStrategies.length})
+                  </label>
+                </div>
+
+                {/* Strategies List */}
+                <div className="max-h-64 overflow-y-auto">
+                  {allSavedStrategies.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      No saved strategies found
+                    </div>
+                  ) : (
+                    allSavedStrategies.map((strategy) => {
+                      // Check if this strategy is currently in the portfolio
+                      const isInPortfolio = rows.some(row => row.name === strategy.name);
+                      
+                      return (
+                        <div key={strategy.id || strategy.name} className="flex items-center gap-2 py-2 hover:bg-gray-50 px-2 rounded">
+                          <input
+                            type="checkbox"
+                            id={`edit-modal-strategy-${strategy.id || strategy.name}`}
+                            checked={isInPortfolio}
+                            onChange={() => {
+                              // Toggle strategy in/out of portfolio
+                              const existingRow = rows.find(row => row.name === strategy.name);
+                              if (existingRow) {
+                                // Remove from portfolio
+                                setRows(prev => prev.filter(r => r.name !== strategy.name));
+                              } else {
+                                // Add to portfolio - create a new row from the strategy
+                                const newRow = {
+                                  id: strategy.id || `temp-${Date.now()}`,
+                                  name: strategy.name,
+                                  qty: 1,
+                                  dte: 'DTE',
+                                  selectedDTEs: [0],
+                                  weekdays: { mon: true, tue: true, wed: true, thu: true, fri: true, sat: false, sun: false },
+                                  budgetDays: 'Budget Days',
+                                  selectedBudgetDays: [],
+                                  slippage: '0%',
+                                  selected: true
+                                };
+                                setRows(prev => [...prev, newRow]);
+                              }
+                            }}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                          />
+                          <label htmlFor={`edit-modal-strategy-${strategy.id || strategy.name}`} className="text-sm text-gray-700 cursor-pointer flex-1">
+                            {strategy.name}
+                          </label>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="px-6 py-2 text-gray-700 hover:text-gray-900 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmEdit}
+                className="px-6 py-2 rounded-lg font-medium transition-all bg-blue-700 text-white hover:bg-blue-800 active:scale-95 cursor-pointer shadow-sm"
+              >
+                Update
               </button>
             </div>
           </div>

@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 
-// Build option list in the order: ITM-20 ... ITM-1, ATM, OTM-1 ... OTM-20
 const buildOptions = () => {
   const options = [];
   for (let i = 20; i >= 1; i--) {

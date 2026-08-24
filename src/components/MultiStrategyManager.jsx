@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Play, Square, Edit2, Trash2, Clock, TrendingUp, TrendingDown, Activity, AlertCircle, RefreshCw, Copy } from 'lucide-react';
+import logger from '../utils/logger';
 
 const MultiStrategyManager = () => {
   const [strategies, setStrategies] = useState([]);
@@ -34,7 +35,7 @@ const MultiStrategyManager = () => {
         setStatus(null);
       }
     } catch (error) {
-      console.error('Failed to fetch status:', error);
+      logger.error('Failed to fetch status:', error);
     }
   };
 
@@ -63,12 +64,10 @@ const MultiStrategyManager = () => {
 
   const handleSaveStrategy = (strategy) => {
     if (editingStrategy !== null && editingStrategy.index !== undefined) {
-      // Edit existing
       const updated = [...strategies];
       updated[editingStrategy.index] = strategy;
       setStrategies(updated);
     } else {
-      // Add new
       setStrategies([...strategies, strategy]);
     }
     setShowAddModal(false);
@@ -410,6 +409,37 @@ const StrategyModal = ({ strategy, onSave, onClose }) => {
     onSave(formData);
   };
 
+  const handleAddLeg = () => {
+    setFormData({
+      ...formData,
+      legs: [
+        ...formData.legs,
+        { option_type: 'CALL', position: 'SELL', lots: 1, strike_type: 'atm' }
+      ]
+    });
+  };
+
+  const handleRemoveLeg = (index) => {
+    if (formData.legs.length > 1) {
+      setFormData({
+        ...formData,
+        legs: formData.legs.filter((_, i) => i !== index)
+      });
+    }
+  };
+
+  const handleUpdateLeg = (index, field, value) => {
+    const updatedLegs = [...formData.legs];
+    updatedLegs[index] = {
+      ...updatedLegs[index],
+      [field]: field === 'lots' ? parseInt(value) : value
+    };
+    setFormData({
+      ...formData,
+      legs: updatedLegs
+    });
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
@@ -553,6 +583,93 @@ const StrategyModal = ({ strategy, onSave, onClose }) => {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Strategy Legs */}
+          <div className="border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-4">
+              <label className="text-sm font-medium text-gray-700">
+                Strategy Legs ({formData.legs.length})
+              </label>
+              <button
+                type="button"
+                onClick={handleAddLeg}
+                className="px-3 py-1 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1"
+              >
+                <Plus size={16} />
+                Add Leg
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {formData.legs.map((leg, index) => (
+                <div key={index} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-sm font-medium text-gray-700">Leg {index + 1}</span>
+                    {formData.legs.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveLeg(index)}
+                        className="text-red-600 hover:text-red-700 text-sm"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Option Type</label>
+                      <select
+                        value={leg.option_type}
+                        onChange={(e) => handleUpdateLeg(index, 'option_type', e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="CALL">CALL</option>
+                        <option value="PUT">PUT</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Position</label>
+                      <select
+                        value={leg.position}
+                        onChange={(e) => handleUpdateLeg(index, 'position', e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="BUY">BUY</option>
+                        <option value="SELL">SELL</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Lots</label>
+                      <input
+                        type="number"
+                        value={leg.lots}
+                        onChange={(e) => handleUpdateLeg(index, 'lots', e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        min="1"
+                        max="100"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">Strike Type</label>
+                      <select
+                        value={leg.strike_type}
+                        onChange={(e) => handleUpdateLeg(index, 'strike_type', e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="atm">ATM</option>
+                        <option value="itm">ITM</option>
+                        <option value="otm">OTM</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Buttons */}
